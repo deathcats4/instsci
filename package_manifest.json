@@ -7,7 +7,6 @@
   "includes": [
     "instsci",
     "skill",
-    "docs",
     "README.md",
     "README_REVIEW.md",
     "NOTICE_MODIFIED.md",
@@ -28,8 +27,7 @@
   ],
   "notes": [
     "public repository excludes local browser profiles, cookies, PDFs, run outputs, and browser binaries",
-    "creator notes are intentionally omitted from public package",
-    "public docs use ASCII filenames for cross-platform zip viewers",
+    "creator-facing guides, video notes, and audience handouts are intentionally omitted from the public repository",
     "review commands should use PYTHONDONTWRITEBYTECODE or python -B"
   ]
 }

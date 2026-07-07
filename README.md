@@ -28,7 +28,6 @@ It is based on the MIT-licensed InstSci project and keeps the core idea simple: 
 | --- | --- |
 | `instsci/` | Runnable Python package and CLI implementation. |
 | `skill/` | Codex skill instructions for agent-assisted InstSci workflows. |
-| `docs/InstSci_user_guide_zh.md` | Chinese user guide: local setup, first run, batch strategy, Zotero notes. |
 | `README_REVIEW.md` | External review checklist and validation commands. |
 | `NOTICE_MODIFIED.md` | Attribution and modified-build notice. |
 | `LICENSE` | Original MIT license notice retained from InstSci. |

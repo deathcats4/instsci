@@ -16,7 +16,6 @@ Review this as a modified InstSci workflow build, not as a claim of final stable
 
 - Runnable Python source in `instsci/`.
 - Codex skill instructions in `skill/`.
-- Public Chinese user guide in `docs/InstSci_user_guide_zh.md`.
 - MIT license and modified-build attribution.
 
 ## Not Included
@@ -28,6 +27,7 @@ Review this as a modified InstSci workflow build, not as a claim of final stable
 - Build artifacts or wheel files.
 - Bundled CloakBrowser binaries.
 - Personal creator notes.
+- Creator-facing walkthroughs, video notes, and audience handouts.
 
 ## Setup
 
