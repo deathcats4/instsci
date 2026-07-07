@@ -16,7 +16,7 @@ This build packages an agent-friendly research acquisition workflow around InstS
 - Three-layer manifest contract: `file_status`, `standard_status`, and `result_evidence`.
 - Profile-aware browser diagnostics and publisher workflow guidance.
 - Zotero handoff/sync guidance focused on item plus matching PDF attachment.
-- Chinese user guide for local setup, first runs, failure states, and video-demo expectations.
+- Public preview documentation, review checklist, and workflow guidance.
 
 ## Compliance Position
 

@@ -1,6 +1,6 @@
-# InstSci User Guide
+# InstSci Operator Runbook
 
-This guide is for ordinary publisher PDF runs. It is written for reusable, public-facing workflow notes and avoids personal information.
+This runbook is for agents operating InstSci publisher PDF workflows. It is not an external handout, tutorial script, or private process note.
 
 ## Default Workflow
 
@@ -102,7 +102,7 @@ instsci papers dois.txt --publisher onepetro --mode diagnose --force
 
 ## Public Sharing Notes
 
-For public tutorials or audience-facing notes, keep only:
+For external tutorials or distribution notes outside this repository, keep only:
 
 - general problem pattern
 - browser/VPN/routing concept

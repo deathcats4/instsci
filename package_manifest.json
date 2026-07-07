@@ -27,7 +27,7 @@
   ],
   "notes": [
     "public repository excludes local browser profiles, cookies, PDFs, run outputs, and browser binaries",
-    "creator-facing guides, video notes, and audience handouts are intentionally omitted from the public repository",
+    "non-repository tutorials, walkthroughs, and distribution notes are intentionally omitted from the public repository",
     "review commands should use PYTHONDONTWRITEBYTECODE or python -B"
   ]
 }

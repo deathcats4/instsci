@@ -26,8 +26,8 @@ Review this as a modified InstSci workflow build, not as a claim of final stable
 - Run folders.
 - Build artifacts or wheel files.
 - Bundled CloakBrowser binaries.
-- Personal creator notes.
-- Creator-facing walkthroughs, video notes, and audience handouts.
+- Private process notes.
+- Non-repository tutorials, walkthroughs, and distribution notes.
 
 ## Setup
 
