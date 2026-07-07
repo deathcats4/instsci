@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "description": "Site-level publisher workflow experience only. Do not store credentials, emails, cookies, institution-specific secrets, or article-specific private notes here.",
+  "publishers": {
+    "acs": {
+      "status": "ready",
+      "batch_policy": "allow",
+      "prewarm": false,
+      "note": "Smoke-tested with visible browser workflow."
+    },
+    "wiley": {
+      "status": "ready",
+      "batch_policy": "allow",
+      "prewarm": false,
+      "note": "Smoke-tested with visible browser workflow."
+    },
+    "ieee": {
+      "status": "ready",
+      "batch_policy": "allow",
+      "prewarm": false,
+      "note": "Smoke-tested with visible browser workflow."
+    },
+    "springer-nature": {
+      "status": "ready",
+      "batch_policy": "allow",
+      "prewarm": false,
+      "note": "Smoke-tested; main PDF should be preferred over supplementary PDFs."
+    },
+    "elsevier": {
+      "status": "prewarm_required",
+      "batch_policy": "allow",
+      "prewarm": true,
+      "note": "Run one DOI prewarm when a fresh browser profile or network route is used."
+    },
+    "geoscienceworld": {
+      "status": "access_side_check_needed",
+      "batch_policy": "single_only",
+      "prewarm": true,
+      "known_blocker": "access_unavailable",
+      "note": "Verify access in a regular browser first; do not treat access-side denial as an InstSci download failure."
+    },
+    "onepetro": {
+      "status": "waf_risky",
+      "batch_policy": "single_only",
+      "prewarm": true,
+      "known_blocker": "waf_blocked",
+      "note": "Cloudflare/WAF loops are likely; avoid bulk runs unless explicitly forced."
+    }
+  }
+}
+
