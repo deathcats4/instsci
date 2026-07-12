@@ -28,6 +28,13 @@ from rich.table import Table
 from .config import Config
 from .fetcher import PaperFetcher
 from .publisher_matrix import manifest_next_action, manifest_suggested_paths, normalize_suggested_paths
+from .search_pipeline import (
+    build_search_payload,
+    load_search_payload,
+    parse_selection_indices,
+    write_search_payload,
+    write_selection,
+)
 from .schools import get_school, list_schools, search_schools
 from .sources import semantic_scholar
 
@@ -3150,6 +3157,7 @@ def search(
     limit: int = typer.Option(10, "--limit", "-n", help="Maximum results."),
     year: str = typer.Option("", "--year", "-y", help="Year range, e.g., '2020-2024' or '2020-'."),
     do_fetch: bool = typer.Option(False, "--fetch", help="Also fetch full text for results with DOIs."),
+    output: str = typer.Option("", "--output", "-o", help="Write structured search results to a .json or .csv file."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ):
     """Search for papers via Semantic Scholar."""
@@ -3186,6 +3194,15 @@ def search(
 
     console.print(table)
 
+    if output:
+        try:
+            payload = build_search_payload(query, results, year_range=year)
+            output_path = write_search_payload(payload, output)
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Could not write search results: {exc}[/red]")
+            raise typer.Exit(2)
+        console.print(f"[green]Search results:[/green] {output_path}")
+
     # Optionally fetch full texts
     if do_fetch:
         fetchable = [r for r in results if r.doi or r.arxiv_id]
@@ -3205,6 +3222,35 @@ def search(
                         console.print(f"    [red]Error: {e}[/red]")
             finally:
                 fetcher.close()
+
+
+@app.command("select")
+def select_search_results(
+    search_file: Path = typer.Argument(help="Structured search results from 'instsci search --output'."),
+    indices: str = typer.Option("", "--indices", "-i", help="One-based result indices, e.g. '1,3-5'; omit to select all DOI records."),
+    output: Path = typer.Option(Path("selected_dois.txt"), "--output", "-o", help="DOI file for 'instsci papers'."),
+):
+    """Select DOI-bearing search results and create an auditable papers input file."""
+    try:
+        payload = load_search_payload(search_file)
+        results = payload.get("results") or []
+        selected_indices = parse_selection_indices(indices, len(results))
+        doi_path, report_path, report = write_selection(
+            search_file,
+            payload,
+            selected_indices,
+            output,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not select search results: {exc}[/red]")
+        raise typer.Exit(2)
+
+    console.print(
+        f"[green]Selected {report['selected_count']} unique DOI records[/green] "
+        f"({report['skipped_count']} skipped)."
+    )
+    console.print(f"[dim]DOI file: {doi_path}[/dim]")
+    console.print(f"[dim]Selection report: {report_path}[/dim]")
 
 
 @app.command()

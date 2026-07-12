@@ -83,6 +83,21 @@ For final manifests, keep Markdown, CSV, and JSON counts consistent. `file_statu
 
 ## Zotero Sync
 
+Use the complete discovery-to-library path when the user starts from a topic
+rather than an existing DOI list:
+
+```powershell
+instsci search "research topic" --limit 50 --year 2020- --output .\runs\search.json
+instsci select .\runs\search.json --indices "1,3-8" --output .\runs\selected_dois.txt
+instsci papers .\runs\selected_dois.txt --publisher auto --output .\runs\papers
+instsci zotero sync .\runs\papers --attachment-mode linked_file
+```
+
+`search --output` creates reviewable JSON or CSV. `select` uses one-based result
+indices, removes duplicate DOI values, skips rows without a DOI, and writes a
+neighboring selection report. Do not silently acquire every search hit when the
+user asked to review or choose papers first.
+
 After `papers` or `publisher-batch` writes a run manifest, keep Zotero as the long-term paper entry point:
 
 ```powershell

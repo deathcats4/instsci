@@ -8,6 +8,8 @@ It is based on the MIT-licensed InstSci project and keeps the core idea simple: 
 
 ## What It Does
 
+- Searches for candidate papers and exports reviewable JSON or CSV results.
+- Turns selected search results into a deduplicated DOI file for acquisition.
 - Finds Open Access PDFs first, without opening a browser when OA is enough.
 - Uses a visible CloakBrowser flow for closed-access publisher checks.
 - Keeps SSO, CAPTCHA, 2FA, and WAF decisions in the user's hands.
@@ -73,22 +75,33 @@ Do not start with hundreds of DOI. A good first test is 5-10 mixed papers so you
 ## Typical Workflow
 
 ```powershell
-# 1. Run OA-first and auto publisher grouping
-instsci papers .\dois.txt --publisher auto --output .\runs\papers
+# 1. Search and save a reviewable candidate set
+instsci search "pyrite sulfur isotope uranium" --limit 50 --year 2020- --output .\runs\search.json
 
-# 2. Inspect publisher readiness and unresolved groups
+# 2. Select one-based rows; omit --indices to keep every unique DOI record
+instsci select .\runs\search.json --indices "1,3-8,12" --output .\runs\selected_dois.txt
+
+# 3. Run OA-first acquisition and auto publisher grouping
+instsci papers .\runs\selected_dois.txt --publisher auto --output .\runs\papers
+
+# 4. Inspect publisher readiness and unresolved groups
 instsci publisher-doctor --matrix
 
-# 3. Run a specific publisher group when browser access is needed
+# 5. Run a specific publisher group when browser access is needed
 instsci papers .\runs\papers\browser_groups\springer_dois.txt --publisher springer --no-oa-first --output .\runs\springer
 
-# 4. Build a next-step plan for failures or unresolved rows
+# 6. Build a next-step plan for failures or unresolved rows
 instsci workflow-plan .\runs\papers
 
-# 5. Send successful items to Zotero and link local PDFs
+# 7. Send successful items to Zotero and link local PDFs
 instsci zotero handoff .\runs\papers --tags project/example
 instsci zotero sync .\runs\papers --attachment-mode linked_file
 ```
+
+`search` currently uses Semantic Scholar. Its JSON output preserves the query,
+source, result indices, metadata, and identifiers. `select` writes both the DOI
+file consumed by `papers` and a neighboring `.selection.json` report that records
+selected, skipped, missing-DOI, and duplicate-DOI rows.
 
 ## Reading Results
 
@@ -126,8 +139,8 @@ python -B -m instsci.cli doctor --full --package-path .
 
 Current package validation before publication:
 
-- Python compile: 66/66 files passed.
-- Unit and regression tests: 285/285 passed (`1` live publisher smoke test skipped unless explicitly enabled).
+- Python compile: 68/68 files passed.
+- Unit and regression tests: 290/290 passed (`1` live publisher smoke test skipped unless explicitly enabled).
 - Public package audit: passed.
 - Zip hygiene scan: passed.
 - Institution-specific residue scan: passed.
