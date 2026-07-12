@@ -116,7 +116,11 @@ def _looks_like_path_regex_example(path: Path, line: str) -> bool:
 
 def _is_audit_rule_or_fixture_file(root: Path, path: Path) -> bool:
     rel = _relative(root, path).replace("\\", "/")
-    return rel.endswith("instsci/public_audit.py") or rel.endswith("instsci/tests/test_public_audit.py")
+    return (
+        rel.endswith("instsci/public_audit.py")
+        or rel.endswith("instsci/tests/test_public_audit.py")
+        or rel.endswith("instsci/tests/project_guards.py")
+    )
 
 
 def audit_public_package(path: str | Path, *, include_institution_scan: bool = True) -> dict[str, Any]:

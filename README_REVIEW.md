@@ -48,7 +48,7 @@ Run these from the repository root:
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
 python -B -m py_compile (Get-ChildItem .\instsci -Recurse -Filter *.py | ForEach-Object FullName)
-python -B -m unittest instsci.tests.test_public_audit instsci.tests.test_status_contract instsci.tests.test_zotero_mcp_handoff instsci.tests.test_contract_fixtures -v
+python -B -m unittest discover -s instsci/tests -v
 python -B -m instsci.cli public-audit .
 python -B -m instsci.cli doctor --full --package-path .
 ```

@@ -51,6 +51,8 @@ Recommended environment:
 - Your own legal institutional access when closed-access papers are involved.
 - Optional: Zotero Desktop for long-term paper and PDF management.
 
+For Elsevier and ScienceDirect retrieval, the Elsevier API key is a project-wide global setting. Configure it once with `instsci elsevier-setup --api-key YOUR_KEY --validate`. Inst Token is optional and should only be configured when your library explicitly provides one. The preferred retrieval route is `view=FULL XML -> object/eid -> PDF`.
+
 ## First Run
 
 Start with diagnostics:
@@ -117,15 +119,15 @@ This pairs well with local attachment-management tools such as Zotero Attanger, 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
 python -B -m py_compile (Get-ChildItem .\instsci -Recurse -Filter *.py | ForEach-Object FullName)
-python -B -m unittest instsci.tests.test_public_audit instsci.tests.test_status_contract instsci.tests.test_zotero_mcp_handoff instsci.tests.test_contract_fixtures -v
+python -B -m unittest discover -s instsci/tests -v
 python -B -m instsci.cli public-audit .
 python -B -m instsci.cli doctor --full --package-path .
 ```
 
 Current package validation before publication:
 
-- Python compile: 47/47 files passed.
-- Contract and handoff tests: 48/48 passed.
+- Python compile: 66/66 files passed.
+- Unit and regression tests: 285/285 passed (`1` live publisher smoke test skipped unless explicitly enabled).
 - Public package audit: passed.
 - Zip hygiene scan: passed.
 - Institution-specific residue scan: passed.
@@ -135,6 +137,8 @@ Current package validation before publication:
 InstSci Workflow is intended to make lawful literature acquisition more batchable and diagnosable. Users must rely on Open Access routes, their own library subscriptions, institutional entitlements, interlibrary loan, or other lawful access paths.
 
 The tool does not ask for passwords and should not automate credentials, OTPs, CAPTCHA, or publisher challenges. When those appear, the user completes them manually in the visible browser.
+
+Login persistence is local. InstSci reuses a persistent CloakBrowser profile and long-lived publisher broker, but it does not store your institution password. Exported cookies are not treated as a complete login state, and runtime profiles, cookies, broker queues, and run outputs are ignored by Git.
 
 ## Attribution
 

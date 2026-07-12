@@ -2964,7 +2964,6 @@ class PublisherBatchDownloader:
                 "you do not have access to this content",
                 "purchase pdf",
                 "purchase this article",
-                "institutional sign in",
                 "sign in to continue reading",
                 "subscribe to unlock",
                 "you do not have access to this pdf",

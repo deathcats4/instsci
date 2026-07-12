@@ -231,6 +231,14 @@ def pdf_candidate_score(profile: PublisherProfile, url: str, *, doi: str = "", s
         doi_escaped = doi_lower.replace("/", "%2f")
         if doi_lower in lower or doi_escaped in lower:
             score += 40
+        if profile.name.lower() == "rsc":
+            doi_suffix = doi_lower.split("/", 1)[-1]
+            if doi_suffix and doi_suffix in lower:
+                score += 40
+            if source_url:
+                expected = source_url.replace("/articlelanding/", "/articlepdf/").lower()
+                if lower.rstrip("/") == expected.rstrip("/"):
+                    score += 80
     main_markers = (
         "/doi/pdf/",
         "/doi/epdf/",
@@ -300,7 +308,8 @@ def belongs_to_current_article(profile: PublisherProfile, url: str, *, doi: str,
         if host.endswith("wiley.com") or host.endswith("wiley.com.cn"):
             if any(marker in lower for marker in ("/doi/pdf", "/doi/epdf", "/doi/pdfdirect")):
                 return doi_lower in lower or doi_escaped in lower
-        return True
+            return True
+        return False
     if profile_name == "aps":
         host = (urlparse(url).hostname or "").lower()
         if host.endswith("journals.aps.org") or host.endswith("link.aps.org"):

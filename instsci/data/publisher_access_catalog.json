@@ -326,6 +326,45 @@
         ]
       }
     },
+    "elife": {
+      "profile_key": "elife",
+      "display_name": "eLife",
+      "pdf_route_strategy": [
+        "article_id_pdf_route",
+        "page_discovered_pdf_links"
+      ],
+      "identity": {
+        "anonymous_access": "usually_open_access",
+        "closed_access_requires": [
+          "not_applicable_open_access_publisher"
+        ],
+        "login_entry_hints": [],
+        "challenge_risk": "low"
+      },
+      "persistence": {
+        "stores": [
+          "browser_profile_dir",
+          "carsi_cookie_dir/elife.json",
+          "attempt_cache"
+        ],
+        "preferred": "stateless_pdf_route",
+        "notes": "eLife articles are normally open access; use the article identifier encoded in the DOI for the PDF route."
+      },
+      "link_characteristics": [
+        "elifesciences.org/articles/{article_id}",
+        "elifesciences.org/articles/{article_id}.pdf"
+      ],
+      "verification": {
+        "sample_doi": "10.7554/elife.32822",
+        "expected_domains": [
+          "elifesciences.org"
+        ],
+        "expected_pdf_markers": [
+          "/articles/",
+          ".pdf"
+        ]
+      }
+    },
     "elsevier": {
       "profile_key": "elsevier",
       "display_name": "Elsevier / ScienceDirect",
@@ -417,6 +456,51 @@
         ],
         "expected_pdf_markers": [
           "/pdf"
+        ]
+      }
+    },
+    "geoscienceworld": {
+      "profile_key": "geoscienceworld",
+      "display_name": "GeoScienceWorld",
+      "pdf_route_strategy": [
+        "article_page_pdf_link",
+        "page_discovered_pdf_links"
+      ],
+      "identity": {
+        "anonymous_access": "open_access_articles_only",
+        "closed_access_requires": [
+          "institutional_ip_or_proxy",
+          "federated_sso_or_openathens",
+          "personal_or_library_subscription"
+        ],
+        "login_entry_hints": [
+          "Institutional Login",
+          "OpenAthens",
+          "Shibboleth"
+        ],
+        "challenge_risk": "medium"
+      },
+      "persistence": {
+        "stores": [
+          "browser_profile_dir",
+          "carsi_cookie_dir/geoscienceworld.json",
+          "attempt_cache"
+        ],
+        "preferred": "persistent_browser_profile",
+        "notes": "Treat catalog routes as planning context until the target article is checked in the visible browser."
+      },
+      "link_characteristics": [
+        "pubs.geoscienceworld.org/.../article/...",
+        "/article-pdf/ and /doi/pdf/"
+      ],
+      "verification": {
+        "sample_doi": "10.1130/g54789.1",
+        "expected_domains": [
+          "pubs.geoscienceworld.org"
+        ],
+        "expected_pdf_markers": [
+          "/article-pdf/",
+          "/doi/pdf/"
         ]
       }
     },
@@ -545,6 +629,52 @@
         ],
         "expected_pdf_markers": [
           "/pdf"
+        ]
+      }
+    },
+    "onepetro": {
+      "profile_key": "onepetro",
+      "display_name": "OnePetro",
+      "pdf_route_strategy": [
+        "article_page_pdf_link",
+        "browser_download_capture"
+      ],
+      "identity": {
+        "anonymous_access": "open_access_articles_only",
+        "closed_access_requires": [
+          "institutional_ip_or_proxy",
+          "federated_sso_or_openathens",
+          "personal_or_library_subscription"
+        ],
+        "login_entry_hints": [
+          "Institutional Login",
+          "OpenAthens",
+          "Sign in"
+        ],
+        "challenge_risk": "high"
+      },
+      "persistence": {
+        "stores": [
+          "browser_profile_dir",
+          "carsi_cookie_dir/onepetro.json",
+          "attempt_cache"
+        ],
+        "preferred": "persistent_browser_profile",
+        "notes": "Use a single-DOI visible-browser prewarm before attempting a batch because publisher verification can be session-sensitive."
+      },
+      "link_characteristics": [
+        "onepetro.org/.../article/...",
+        "/proceedings-pdf/, /article-pdf/, or /content-pdf/"
+      ],
+      "verification": {
+        "sample_doi": "10.2118/182716-MS",
+        "expected_domains": [
+          "onepetro.org"
+        ],
+        "expected_pdf_markers": [
+          "/proceedings-pdf/",
+          "/article-pdf/",
+          "/content-pdf/"
         ]
       }
     },
