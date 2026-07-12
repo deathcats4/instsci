@@ -30,7 +30,7 @@ class SearchPipelineTests(TestCase):
             json_loaded = load_search_payload(json_path)
             csv_loaded = load_search_payload(csv_path)
 
-        self.assertEqual(json_loaded["results"][0]["doi"], "10.1000/Test")
+        self.assertEqual(json_loaded["results"][0]["doi"], "10.1000/test")
         self.assertEqual(csv_loaded["results"][0]["authors"], ["A", "B"])
 
     def test_selection_parser_supports_ranges_and_rejects_out_of_range(self) -> None:
@@ -57,7 +57,7 @@ class SearchPipelineTests(TestCase):
             SearchResult(title="Selected", authors=["A"], year=2024, doi="10.1000/selected"),
             SearchResult(title="No DOI", authors=["B"], year=2023, arxiv_id="2401.00001"),
         ]
-        with TemporaryDirectory() as tmp, patch("instsci.cli.semantic_scholar.search", return_value=results):
+        with TemporaryDirectory() as tmp, patch("instsci.cli.multi_search.search", return_value=results):
             search_path = Path(tmp) / "search.json"
             doi_path = Path(tmp) / "selected_dois.txt"
             search_result = runner.invoke(app, ["search", "topic", "--output", str(search_path)])

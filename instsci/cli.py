@@ -27,6 +27,7 @@ from rich.table import Table
 
 from .config import Config
 from .fetcher import PaperFetcher
+from . import multi_search
 from .publisher_matrix import manifest_next_action, manifest_suggested_paths, normalize_suggested_paths
 from .search_pipeline import (
     build_search_payload,
@@ -36,7 +37,6 @@ from .search_pipeline import (
     write_selection,
 )
 from .schools import get_school, list_schools, search_schools
-from .sources import semantic_scholar
 
 app = typer.Typer(
     name="instsci",
@@ -3156,15 +3156,27 @@ def search(
     query: str = typer.Argument(help="Search query."),
     limit: int = typer.Option(10, "--limit", "-n", help="Maximum results."),
     year: str = typer.Option("", "--year", "-y", help="Year range, e.g., '2020-2024' or '2020-'."),
+    sources: str = typer.Option("semantic_scholar,openalex,crossref", "--sources", help="Comma-separated metadata sources."),
     do_fetch: bool = typer.Option(False, "--fetch", help="Also fetch full text for results with DOIs."),
     output: str = typer.Option("", "--output", "-o", help="Write structured search results to a .json or .csv file."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ):
-    """Search for papers via Semantic Scholar."""
+    """Search and merge paper metadata from multiple scholarly indexes."""
     _setup_logging(verbose)
 
     console.print(f"[bold]Searching:[/bold] {query}")
-    results = semantic_scholar.search(query, limit=limit, year_range=year or None)
+    try:
+        config = Config.load()
+        results = multi_search.search(
+            query,
+            limit=limit,
+            year_range=year or None,
+            sources=sources,
+            email=config.email,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2)
 
     if not results:
         console.print("[yellow]No results found.[/yellow]")
@@ -3178,6 +3190,7 @@ def search(
     table.add_column("Authors", max_width=30)
     table.add_column("DOI", max_width=25)
     table.add_column("Cites", width=5, justify="right")
+    table.add_column("Sources", max_width=28)
 
     for i, r in enumerate(results, 1):
         authors_str = ", ".join(r.authors[:3])
@@ -3190,13 +3203,14 @@ def search(
             authors_str[:30],
             r.doi[:25] if r.doi else r.arxiv_id[:25] if r.arxiv_id else "",
             str(r.citation_count),
+            ", ".join(getattr(r, "sources", []) or ["semantic_scholar"]),
         )
 
     console.print(table)
 
     if output:
         try:
-            payload = build_search_payload(query, results, year_range=year)
+            payload = build_search_payload(query, results, year_range=year, source="multi_source")
             output_path = write_search_payload(payload, output)
         except (OSError, ValueError) as exc:
             console.print(f"[red]Could not write search results: {exc}[/red]")
@@ -3208,7 +3222,6 @@ def search(
         fetchable = [r for r in results if r.doi or r.arxiv_id]
         if fetchable:
             console.print(f"\n[bold]Fetching {len(fetchable)} papers...[/bold]")
-            config = Config.load()
             fetcher = PaperFetcher(config)
             try:
                 for r in fetchable:

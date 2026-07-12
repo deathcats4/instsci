@@ -98,8 +98,11 @@ instsci zotero handoff .\runs\papers --tags project/example
 instsci zotero sync .\runs\papers --attachment-mode linked_file
 ```
 
-`search` currently uses Semantic Scholar. Its JSON output preserves the query,
-source, result indices, metadata, and identifiers. `select` writes both the DOI
+`search` queries Semantic Scholar, OpenAlex, and Crossref by default; use
+`--sources` to choose a subset. Results are merged by normalized DOI, with a
+title-and-year fallback when one provider lacks a DOI. Its JSON output preserves
+the query, contributing sources, source-specific citation counts, result indices,
+metadata, and identifiers. `select` writes both the DOI
 file consumed by `papers` and a neighboring `.selection.json` report that records
 selected, skipped, missing-DOI, and duplicate-DOI rows.
 
@@ -139,8 +142,8 @@ python -B -m instsci.cli doctor --full --package-path .
 
 Current package validation before publication:
 
-- Python compile: 68/68 files passed.
-- Unit and regression tests: 290/290 passed (`1` live publisher smoke test skipped unless explicitly enabled).
+- Python compile: 73/73 files passed.
+- Unit and regression tests: 296/296 passed (`1` live publisher smoke test skipped unless explicitly enabled).
 - Public package audit: passed.
 - Zip hygiene scan: passed.
 - Institution-specific residue scan: passed.

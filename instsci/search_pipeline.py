@@ -21,14 +21,15 @@ def normalize_doi(value: str) -> str:
         if lower.startswith(prefix):
             normalized = normalized[len(prefix):].strip()
             break
-    return normalized
+    return normalized.lower()
 
 
 def result_to_record(result: Any, index: int, *, source: str = "semantic_scholar") -> dict[str, Any]:
     """Convert a provider result object into the public search-result contract."""
     return {
         "index": index,
-        "source": source,
+        "source": (list(getattr(result, "sources", []) or [source]))[0],
+        "sources": list(getattr(result, "sources", []) or [source]),
         "paper_id": str(getattr(result, "paper_id", "") or ""),
         "title": str(getattr(result, "title", "") or ""),
         "authors": list(getattr(result, "authors", []) or []),
@@ -38,6 +39,7 @@ def result_to_record(result: Any, index: int, *, source: str = "semantic_scholar
         "arxiv_id": str(getattr(result, "arxiv_id", "") or ""),
         "journal": str(getattr(result, "journal", "") or ""),
         "citation_count": int(getattr(result, "citation_count", 0) or 0),
+        "citation_counts": dict(getattr(result, "citation_counts", {}) or {}),
         "url": str(getattr(result, "s2_url", "") or ""),
     }
 
@@ -50,12 +52,20 @@ def build_search_payload(
     source: str = "semantic_scholar",
 ) -> dict[str, Any]:
     records = [result_to_record(result, index, source=source) for index, result in enumerate(results, 1)]
+    sources = list(
+        dict.fromkeys(
+            item
+            for record in records
+            for item in (record.get("sources") or [record.get("source")])
+            if item
+        )
+    ) or [source]
     return {
         "schema": SEARCH_SCHEMA,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "query": query,
         "year_range": year_range,
-        "sources": [source],
+        "sources": sources,
         "count": len(records),
         "results": records,
     }
@@ -78,8 +88,8 @@ def write_search_payload(payload: dict[str, Any], path: str | Path) -> Path:
         return output
 
     fieldnames = [
-        "index", "source", "paper_id", "title", "authors", "year", "abstract",
-        "doi", "arxiv_id", "journal", "citation_count", "url",
+        "index", "source", "sources", "paper_id", "title", "authors", "year", "abstract",
+        "doi", "arxiv_id", "journal", "citation_count", "citation_counts", "url",
     ]
     with output.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -87,6 +97,8 @@ def write_search_payload(payload: dict[str, Any], path: str | Path) -> Path:
         for record in payload.get("results", []):
             row = dict(record)
             row["authors"] = "; ".join(row.get("authors") or [])
+            row["sources"] = "; ".join(row.get("sources") or [])
+            row["citation_counts"] = json.dumps(row.get("citation_counts") or {}, ensure_ascii=False, sort_keys=True)
             writer.writerow({key: row.get(key, "") for key in fieldnames})
     return output
 
@@ -108,8 +120,10 @@ def load_search_payload(path: str | Path) -> dict[str, Any]:
                     **row,
                     "index": int(row.get("index") or position),
                     "authors": [part.strip() for part in str(row.get("authors") or "").split(";") if part.strip()],
+                    "sources": [part.strip() for part in str(row.get("sources") or "").split(";") if part.strip()],
                     "year": int(row["year"]) if str(row.get("year") or "").isdigit() else None,
                     "citation_count": int(row.get("citation_count") or 0),
+                    "citation_counts": json.loads(row.get("citation_counts") or "{}"),
                     "doi": normalize_doi(str(row.get("doi") or "")),
                 }
             )

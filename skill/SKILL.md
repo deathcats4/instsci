@@ -93,6 +93,9 @@ instsci papers .\runs\selected_dois.txt --publisher auto --output .\runs\papers
 instsci zotero sync .\runs\papers --attachment-mode linked_file
 ```
 
+`search` queries Semantic Scholar, OpenAlex, and Crossref by default and merges
+records by normalized DOI. Treat citation counts as source-specific metadata;
+do not describe the maximum merged value as a single authoritative count.
 `search --output` creates reviewable JSON or CSV. `select` uses one-based result
 indices, removes duplicate DOI values, skips rows without a DOI, and writes a
 neighboring selection report. Do not silently acquire every search hit when the

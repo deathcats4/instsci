@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .config import Config
 from .fetcher import PaperFetcher
+from . import multi_search
 from .publisher_access import (
     load_institutional_identity_policy,
     load_publisher_access_catalog,
@@ -479,8 +480,13 @@ async def fetch_paper(identifier: str, format: str = "markdown") -> str:
 
 
 @mcp.tool()
-async def search_papers(query: str, limit: int = 10, year_range: str = "") -> str:
-    """Search for academic papers via Semantic Scholar.
+async def search_papers(
+    query: str,
+    limit: int = 10,
+    year_range: str = "",
+    sources: str = "semantic_scholar,openalex,crossref",
+) -> str:
+    """Search for academic papers via Semantic Scholar, OpenAlex, and Crossref.
 
     Returns a list of papers with titles, authors, DOIs, and citation counts.
     Use the DOIs from results with fetch_paper to get full text.
@@ -489,9 +495,16 @@ async def search_papers(query: str, limit: int = 10, year_range: str = "") -> st
         query: Search query (e.g. "organic photovoltaics silver nanowire").
         limit: Maximum number of results (1-100, default 10).
         year_range: Optional year filter (e.g. "2020-2024" or "2020-").
+        sources: Comma-separated metadata sources.
     """
+    config = Config.load()
     results = await asyncio.to_thread(
-        semantic_scholar.search, query, limit=limit, year_range=year_range or None
+        multi_search.search,
+        query,
+        limit=limit,
+        year_range=year_range or None,
+        sources=sources,
+        email=config.email,
     )
 
     if not results:
@@ -514,6 +527,7 @@ async def search_papers(query: str, limit: int = 10, year_range: str = "") -> st
         elif r.arxiv_id:
             lines.append(f"- **arXiv:** {r.arxiv_id}")
         lines.append(f"- **Citations:** {r.citation_count}")
+        lines.append(f"- **Sources:** {', '.join(r.sources)}")
         if r.abstract:
             lines.append(f"- **Abstract:** {r.abstract[:200]}...")
         lines.append("")
