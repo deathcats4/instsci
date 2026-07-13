@@ -264,7 +264,7 @@ class PublisherBatchDownloader:
 
         failed_records = [
             record
-            for record, result in zip(records, results)
+            for record, result in zip(records_to_run, results)
             if result.status == "failed" and result.reason in RETRYABLE_REASONS
         ]
 

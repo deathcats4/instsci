@@ -32,7 +32,7 @@ This reference is for InstSci publisher PDF retrieval, closed-access verificatio
 ## Optional MCP And Skill Handoff
 
 - Let the skill decide whether a task is metadata/OA work, HTTP preflight, or final publisher PDF evidence.
-- If the current environment provides InstSci MCP tools, use them for structured context first: `get_institutional_identity_policy`, `get_publisher_access_catalog`, and `get_publisher_browser_verification_matrix`.
+- If the current environment provides InstSci MCP tools, use them for structured context first: `get_institutional_identity_policy`, `get_publisher_access_catalog`, and `get_publisher_capability_summary`.
 - If available, use `plan_publisher_pdf_workflow` to produce the visible CLI command and to detect missing subscription institution context.
 - If those MCP tools are unavailable, proceed from repository files and CLI output instead of blocking.
 - Do not use MCP `fetch_paper`, HTTP probes, cookie replay, or direct request results as final closed-access publisher PDF verdicts.

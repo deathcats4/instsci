@@ -325,19 +325,19 @@ class MCPFetchResultTests(unittest.TestCase):
         self.assertEqual(payload["publisher"]["profile_key"], "elsevier")
         self.assertIn("federated_sso_or_openathens", payload["publisher"]["identity"]["closed_access_requires"])
 
-    def test_mcp_exposes_browser_verification_matrix(self):
+    def test_mcp_exposes_public_capability_summary(self):
         from instsci import mcp_server
 
         payload = json.loads(
             asyncio.run(
-                mcp_server.get_publisher_browser_verification_matrix("wiley", format="json")
+                mcp_server.get_publisher_capability_summary("wiley", format="json")
             )
         )
 
-        self.assertIn("detailed local evidence is intentionally omitted", payload["verdict_source"])
-        self.assertIn("fresh visible browser evidence", payload["scope"])
-        self.assertEqual(payload["publisher"]["profile_key"], "wiley")
-        self.assertIn("browser_verified", payload["publisher"])
+        self.assertIn("Fresh visible CloakBrowser evidence", payload["scope"])
+        self.assertIn("No browser verification", payload["evidence_boundary"])
+        self.assertEqual(payload["publisher"]["status"], "ready")
+        self.assertNotIn("browser_verified", payload["publisher"])
 
     def test_mcp_plans_visible_browser_workflow_without_default_institution(self):
         from instsci import mcp_server
@@ -374,10 +374,10 @@ class MCPFetchResultTests(unittest.TestCase):
                 payload = json.loads(
                     asyncio.run(
                         mcp_server.plan_publisher_pdf_workflow(
-                            "D:/runs/dois.txt",
+                            "runs/dois.txt",
                             publisher="elsevier",
                             institution="Example University",
-                            output="D:/runs/elsevier",
+                            output="runs/elsevier",
                             format="json",
                         )
                     )
@@ -388,10 +388,53 @@ class MCPFetchResultTests(unittest.TestCase):
         self.assertEqual(payload["publisher"], "elsevier")
         self.assertEqual(payload["institution"]["source"], "explicit")
         self.assertEqual(payload["institution"]["value"], "Example University")
-        self.assertIn("instsci publisher-batch D:/runs/dois.txt", payload["command"])
+        self.assertIn("instsci publisher-batch runs/dois.txt", payload["command"])
         self.assertIn("--publisher elsevier", payload["command"])
         self.assertIn("'Example University'", payload["command"])
         self.assertEqual(payload["final_pdf_verdict_requires"], "visible_cloakbrowser")
+
+    def test_mcp_plan_uses_configured_institution_names_before_legacy_school(self):
+        from instsci import mcp_server
+
+        with TemporaryDirectory() as tmp:
+            config = _config(Path(tmp), school="Legacy School")
+            config.institution_name_en = "Configured Institution"
+            with patch.object(mcp_server.Config, "load", return_value=config):
+                payload = json.loads(
+                    asyncio.run(
+                        mcp_server.plan_publisher_pdf_workflow(
+                            "dois.txt",
+                            publisher="auto",
+                            output="runs/papers",
+                            format="json",
+                        )
+                    )
+                )
+
+        self.assertEqual(payload["institution"]["value"], "Configured Institution")
+        self.assertEqual(payload["institution"]["source"], "config.institution_name_en")
+
+    def test_mcp_configures_institution_without_public_directory_entry(self):
+        from instsci import mcp_server
+
+        with TemporaryDirectory() as tmp:
+            config = _config(Path(tmp), school="")
+            with (
+                patch.object(mcp_server.Config, "load", return_value=config),
+                patch.object(config, "save") as save,
+                patch.object(mcp_server, "_reset_fetcher"),
+            ):
+                message = asyncio.run(
+                    mcp_server.configure_institution(
+                        "Configured Institution",
+                        access_url="https://gateway.example.edu/",
+                    )
+                )
+
+        self.assertEqual(config.institution_name_en, "Configured Institution")
+        self.assertEqual(config.webvpn_base_url, "https://gateway.example.edu")
+        save.assert_called_once_with()
+        self.assertIn("Configured institution", message)
 
     def test_fetch_paper_json_returns_structured_result(self):
         from instsci import mcp_server
@@ -455,5 +498,3 @@ class MCPFetchResultTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

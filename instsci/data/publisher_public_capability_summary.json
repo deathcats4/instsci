@@ -1,0 +1,88 @@
+{
+  "schema": "instsci.publisher_public_capability_summary.v1",
+  "schema_version": 1,
+  "scope": "Public route-planning summary only. Fresh visible CloakBrowser evidence is required for any final publisher PDF verdict.",
+  "evidence_boundary": "No browser verification, entitlement, institution-specific observations, screenshots, local paths, or article-level evidence are stored here.",
+  "publishers": {
+    "acs": {
+      "status": "prewarm_required",
+      "batch_policy": "allow",
+      "prewarm": true,
+      "route_kind": "publisher_pdf_route",
+      "known_blocker": "publisher_challenge_possible",
+      "note": "Use one visible-browser DOI prewarm before a batch."
+    },
+    "wiley": {
+      "status": "ready",
+      "batch_policy": "allow",
+      "prewarm": false,
+      "route_kind": "doi_pdfdirect",
+      "known_blocker": "",
+      "note": "Public route template is available; entitlement still requires current browser evidence."
+    },
+    "ieee": {
+      "status": "prewarm_required",
+      "batch_policy": "allow",
+      "prewarm": true,
+      "route_kind": "institutional_sign_in_to_stamp_pdf",
+      "known_blocker": "session_persistence_required",
+      "note": "Prewarm one DOI in the visible browser before batching."
+    },
+    "springer": {
+      "status": "ready",
+      "batch_policy": "allow",
+      "prewarm": false,
+      "route_kind": "direct_pdf_or_article_pdf",
+      "known_blocker": "",
+      "note": "SpringerLink and Nature-family route variants are handled by one canonical publisher key."
+    },
+    "elsevier": {
+      "status": "prewarm_required",
+      "batch_policy": "allow",
+      "prewarm": true,
+      "route_kind": "oa_or_api_then_visible_browser",
+      "known_blocker": "signed_asset_or_challenge_possible",
+      "note": "Try OA/API routes first and prewarm the visible browser for remaining rows."
+    },
+    "geoscienceworld": {
+      "status": "access_side_check_needed",
+      "batch_policy": "single_only",
+      "prewarm": true,
+      "route_kind": "article_pdf_route",
+      "known_blocker": "access_unavailable",
+      "note": "Check current access with one DOI before any larger run."
+    },
+    "onepetro": {
+      "status": "waf_risky",
+      "batch_policy": "single_only",
+      "prewarm": true,
+      "route_kind": "article_pdf_route",
+      "known_blocker": "waf_blocked",
+      "note": "Avoid bulk runs until one visible-browser DOI completes."
+    },
+    "iop": {
+      "status": "ready",
+      "batch_policy": "allow",
+      "prewarm": false,
+      "route_kind": "article_pdf_deeplink",
+      "known_blocker": "",
+      "note": "Public route template is available; this is not an entitlement verdict."
+    },
+    "science": {
+      "status": "ready",
+      "batch_policy": "allow",
+      "prewarm": false,
+      "route_kind": "doi_epdf",
+      "known_blocker": "",
+      "note": "Public route template is available; this is not an entitlement verdict."
+    },
+    "aps": {
+      "status": "route_not_published",
+      "batch_policy": "skip",
+      "prewarm": false,
+      "route_kind": "article_pdf_route",
+      "known_blocker": "public_route_not_published",
+      "note": "A reusable closed-access route is not part of this public preview."
+    }
+  }
+}

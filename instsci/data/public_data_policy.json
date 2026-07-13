@@ -4,8 +4,7 @@
   "public_assets": [
     "institutional_identity_policy.json",
     "publisher_access_catalog.json",
-    "publisher_browser_verification_matrix.json",
-    "publisher_capability_matrix.json",
+    "publisher_public_capability_summary.json",
     "publisher_carsi.json",
     "webvpn.json"
   ],

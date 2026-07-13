@@ -15,7 +15,7 @@ from . import multi_search
 from .publisher_access import (
     load_institutional_identity_policy,
     load_publisher_access_catalog,
-    load_publisher_browser_verification_matrix,
+    load_publisher_capability_summary,
 )
 from .publisher_profiles import get_publisher_profile, list_publisher_profiles
 from .sources import semantic_scholar
@@ -76,6 +76,10 @@ def _unknown_publisher_payload(publisher: str) -> dict[str, Any]:
 def _institution_from_config(config: Config) -> tuple[str, str]:
     if config.carsi_idp_name.strip():
         return config.carsi_idp_name.strip(), "config.carsi_idp_name"
+    if config.institution_name_en.strip():
+        return config.institution_name_en.strip(), "config.institution_name_en"
+    if config.institution_name_zh.strip():
+        return config.institution_name_zh.strip(), "config.institution_name_zh"
     if config.school.strip():
         return config.school.strip(), "config.school"
     return "", ""
@@ -229,20 +233,20 @@ async def get_publisher_access_catalog(publisher: str = "", format: str = "json"
 
 
 @mcp.tool()
-async def get_publisher_browser_verification_matrix(
+async def get_publisher_capability_summary(
     publisher: str = "",
     format: str = "json",
 ) -> str:
-    """Return browser-backed publisher PDF verification results.
+    """Return the public publisher route-planning summary.
 
-    The matrix records prior visible CloakBrowser evidence. New final verdicts
-    still require a fresh visible CloakBrowser workflow for the current DOI/run.
+    This summary intentionally contains no browser evidence or entitlement
+    verdicts. Final publisher conclusions require a fresh visible workflow.
 
     Args:
         publisher: Optional publisher key, display name, or alias.
         format: Output format - "json" (default) or "markdown".
     """
-    matrix = load_publisher_browser_verification_matrix()
+    matrix = load_publisher_capability_summary()
     if publisher.strip():
         try:
             key = _publisher_key(publisher)
@@ -250,10 +254,9 @@ async def get_publisher_browser_verification_matrix(
             payload = _unknown_publisher_payload(publisher)
         else:
             payload = {
-                "version": matrix.get("version"),
-                "last_browser_verification": matrix.get("last_browser_verification"),
-                "verdict_source": matrix.get("verdict_source"),
+                "schema": matrix.get("schema"),
                 "scope": matrix.get("scope"),
+                "evidence_boundary": matrix.get("evidence_boundary"),
                 "publisher": matrix["publishers"][key],
             }
     else:
@@ -457,6 +460,46 @@ async def configure_school(school_name: str) -> str:
 
 
 @mcp.tool()
+async def configure_institution(
+    name: str,
+    access_url: str = "",
+    local_name: str = "",
+    english_name: str = "",
+) -> str:
+    """Configure an institution without requiring an entry in the public school directory.
+
+    Args:
+        name: Institution name in the user's preferred language.
+        access_url: Optional institution-provided campus/library gateway URL.
+        local_name: Optional local-language institution name.
+        english_name: Optional English institution name.
+    """
+    value = name.strip()
+    if not value:
+        return "Institution name is required."
+    access_value = access_url.strip()
+    if access_value and not access_value.lower().startswith(("https://", "http://")):
+        return "access_url must start with https:// or http://."
+
+    config = Config.load()
+    config.institution_name_zh = local_name.strip() or (
+        value if not value.isascii() else config.institution_name_zh
+    )
+    config.institution_name_en = english_name.strip() or (
+        value if value.isascii() else config.institution_name_en
+    )
+    if access_value:
+        config.webvpn_base_url = access_value.rstrip("/")
+    config.save()
+    _reset_fetcher()
+    return (
+        f"Configured institution: {value}. "
+        f"Access URL: {config.webvpn_base_url or '(not set)'}. "
+        "Use the publisher's federated sign-in route first; a configured gateway remains optional."
+    )
+
+
+@mcp.tool()
 async def fetch_paper(identifier: str, format: str = "markdown") -> str:
     """Fetch an academic paper's full text by DOI or URL.
 
@@ -498,19 +541,25 @@ async def search_papers(
         sources: Comma-separated metadata sources.
     """
     config = Config.load()
-    results = await asyncio.to_thread(
-        multi_search.search,
+    response = await asyncio.to_thread(
+        multi_search.search_with_status,
         query,
         limit=limit,
         year_range=year_range or None,
         sources=sources,
         email=config.email,
     )
+    results = response.results
+
+    status_lines = [
+        f"- {source}: {item.get('status')} (count={item.get('count', 0)})"
+        for source, item in response.source_status.items()
+    ]
 
     if not results:
-        return "No results found."
+        return "No results found.\n\nSource status:\n" + "\n".join(status_lines)
 
-    lines = [f"Found {len(results)} results:\n"]
+    lines = [f"Found {len(results)} results:\n", "Source status:", *status_lines, ""]
     for i, r in enumerate(results, 1):
         authors_str = ", ".join(r.authors[:3])
         if len(r.authors) > 3:
@@ -526,7 +575,11 @@ async def search_papers(
             lines.append(f"- **DOI:** {r.doi}")
         elif r.arxiv_id:
             lines.append(f"- **arXiv:** {r.arxiv_id}")
-        lines.append(f"- **Citations:** {r.citation_count}")
+        citation_text = "; ".join(
+            f"{source.replace('_', ' ').title()} {count}"
+            for source, count in r.citation_counts.items()
+        ) or "not reported"
+        lines.append(f"- **Citation counts (source-specific):** {citation_text}")
         lines.append(f"- **Sources:** {', '.join(r.sources)}")
         if r.abstract:
             lines.append(f"- **Abstract:** {r.abstract[:200]}...")

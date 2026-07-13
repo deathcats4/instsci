@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 
 import requests
 
+from .errors import ProviderSearchError, classify_provider_exception
+
 logger = logging.getLogger(__name__)
 
 S2_API = "https://api.semanticscholar.org/graph/v1"
@@ -18,14 +20,17 @@ _SSL_VERIFY = not (os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
                    os.environ.get("http_proxy") or os.environ.get("https_proxy"))
 
 
-def _request_with_retry(url: str, params: dict) -> dict | None:
+def _request_with_retry(url: str, params: dict, *, raise_on_error: bool = False) -> dict | None:
     """Make a GET request with retry on 429 rate limit."""
+    last_error: BaseException | None = None
+    rate_limited = False
     for attempt in range(MAX_RETRIES):
         try:
             resp = requests.get(url, params=params, timeout=15, verify=_SSL_VERIFY)
             if resp.status_code == 404:
                 return None
             if resp.status_code == 429:
+                rate_limited = True
                 wait = 2 ** (attempt + 1)
                 logger.warning("Rate limited by Semantic Scholar, retrying in %ds...", wait)
                 time.sleep(wait)
@@ -33,11 +38,18 @@ def _request_with_retry(url: str, params: dict) -> dict | None:
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
+            last_error = e
             logger.error("Semantic Scholar request failed: %s", e)
             if attempt < MAX_RETRIES - 1:
                 time.sleep(2)
             else:
+                if raise_on_error:
+                    raise ProviderSearchError("semantic_scholar", classify_provider_exception(e), str(e)) from e
                 return None
+    if raise_on_error and rate_limited:
+        raise ProviderSearchError("semantic_scholar", "rate_limited", "Semantic Scholar returned HTTP 429 after retries.")
+    if raise_on_error and last_error:
+        raise ProviderSearchError("semantic_scholar", classify_provider_exception(last_error), str(last_error)) from last_error
     return None
 
 
@@ -62,6 +74,8 @@ def search(
     limit: int = 10,
     year_range: str | None = None,
     fields_of_study: list[str] | None = None,
+    *,
+    raise_on_error: bool = False,
 ) -> list[SearchResult]:
     """Search for papers on Semantic Scholar.
 
@@ -84,7 +98,7 @@ def search(
     if fields_of_study:
         params["fieldsOfStudy"] = ",".join(fields_of_study)
 
-    data = _request_with_retry(f"{S2_API}/paper/search", params)
+    data = _request_with_retry(f"{S2_API}/paper/search", params, raise_on_error=raise_on_error)
     if data is None:
         return []
 

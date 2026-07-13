@@ -23,7 +23,7 @@ Explicit legacy flags such as `--watch-browser`, `--browser-doctor`, and `--no-p
 The runtime matrix lives at:
 
 ```text
-instsci/data/publisher_capability_matrix.json
+instsci/data/publisher_public_capability_summary.json
 ```
 
 Allowed statuses:
@@ -32,7 +32,8 @@ Allowed statuses:
 - `prewarm_required`
 - `waf_risky`
 - `access_side_check_needed`
-- `unsupported`
+- `route_not_published`
+- `unclassified`
 
 Batch policy should be conservative:
 

@@ -350,7 +350,7 @@ class ACSBatchTests(unittest.TestCase):
         self.assertFalse(downloader._looks_logged_out(FakePage()))
         self.assertTrue(downloader._article_access_available(FakePage()))
 
-    def test_elsevier_tsinghua_purchase_pdf_requires_institution_refresh(self):
+    def test_elsevier_example_purchase_pdf_requires_institution_refresh(self):
         class FakeBody:
             def inner_text(self, **_kwargs):
                 return "Access through Example University Article preview Abstract Purchase PDF Access through another organization"
@@ -627,7 +627,7 @@ class ACSBatchTests(unittest.TestCase):
 
         self.assertFalse(
             downloader._is_record_pdf_url(
-                "https://id.tsinghua.edu.cn/res/pdf/SMRZ_guide_cn.pdf",
+                "https://idp.example.edu/res/pdf/institution_guide.pdf",
                 "10.1002/ldr.5372",
             )
         )
@@ -716,7 +716,7 @@ class ACSBatchTests(unittest.TestCase):
         self.assertEqual(result.events[-1]["state"], "institution_selected")
         self.assertIn("Example University (OpenAthens)", result.events[-1]["detail"])
 
-    def test_wiley_does_not_expose_hardcoded_tsinghua_wayfless(self):
+    def test_wiley_does_not_expose_hardcoded_example_wayfless(self):
         cfg = Config(
             output_dir="out",
             cache_dir="cache",
@@ -730,7 +730,7 @@ class ACSBatchTests(unittest.TestCase):
             institution_query="Example University",
         )
 
-        self.assertFalse(hasattr(downloader, "_select_wiley_tsinghua_openathens_wayfless"))
+        self.assertFalse(hasattr(downloader, "_select_wiley_example_openathens_wayfless"))
 
     def test_wiley_clicks_current_record_pdf_entry(self):
         class FakePage:
@@ -892,7 +892,7 @@ class ACSBatchTests(unittest.TestCase):
 
         self.assertEqual(downloader._login_block_reason(FakePage()), "challenge_or_viewer_timeout")
 
-    def test_tsinghua_unsupported_request_is_institution_not_registered(self):
+    def test_example_unsupported_request_is_institution_not_registered(self):
         class FakeBody:
             def inner_text(self, **_kwargs):
                 return "Web Login Service - Unsupported Request The application you have accessed is not registered for use with this service."
@@ -1041,7 +1041,7 @@ class ACSBatchTests(unittest.TestCase):
 
         self.assertFalse(downloader._click_sso_entry(FakePage(), result))
 
-    def test_elsevier_does_not_expose_hardcoded_tsinghua_wayfless(self):
+    def test_elsevier_does_not_expose_hardcoded_example_wayfless(self):
         cfg = Config(
             output_dir="out",
             cache_dir="cache",
@@ -1055,7 +1055,7 @@ class ACSBatchTests(unittest.TestCase):
             institution_query="Example University",
         )
 
-        self.assertFalse(hasattr(downloader, "_select_elsevier_tsinghua_shibauth_wayfless"))
+        self.assertFalse(hasattr(downloader, "_select_elsevier_example_shibauth_wayfless"))
 
     def test_world_scientific_profile_can_drive_institution_search(self):
         self.assertTrue(WORLD_SCIENTIFIC_PROFILE.institution_input_selectors)
@@ -1089,7 +1089,7 @@ class ACSBatchTests(unittest.TestCase):
     def test_world_scientific_institution_banner_is_logged_in(self):
         class FakeBody:
             def inner_text(self, **_kwargs):
-                return "brought to you by TSINGHUA UNIVERSITY CHINA Search My Cart Sign in Institutional Access"
+                return "brought to you by EXAMPLE UNIVERSITY Search My Cart Sign in Institutional Access"
 
         class FakePage:
             url = "https://www.worldscientific.com/"
@@ -1116,7 +1116,7 @@ class ACSBatchTests(unittest.TestCase):
         class FakeBody:
             def inner_text(self, **_kwargs):
                 return (
-                    "brought to you by TSINGHUA UNIVERSITY CHINA "
+                    "brought to you by EXAMPLE UNIVERSITY "
                     "Search My Cart Sign in Institutional Access Abstract Full Text References"
                 )
 
@@ -1150,7 +1150,7 @@ class ACSBatchTests(unittest.TestCase):
         self.assertIn("[role='option']:has-text('Example University')", selectors)
         self.assertFalse(any("Legacy Default University" in selector or "旧默认大学" in selector for selector in selectors))
 
-    def test_profile_tsinghua_selectors_are_not_used_for_other_institutions(self):
+    def test_profile_example_selectors_are_not_used_for_other_institutions(self):
         profile = PublisherProfile(
             name="Example",
             article_url_template="https://example.org/doi/{doi}",
@@ -1319,7 +1319,7 @@ class ACSBatchTests(unittest.TestCase):
 
         def resolve_after_first_wait(_seconds):
             page.url = "https://www.worldscientific.com/doi/10.1142/example"
-            page.body_text = "Article abstract brought to you by TSINGHUA UNIVERSITY CHINA"
+            page.body_text = "Article abstract brought to you by EXAMPLE UNIVERSITY"
 
         with patch("instsci.publisher_batch.time.sleep", side_effect=resolve_after_first_wait):
             self.assertTrue(downloader._wait_for_challenge(page, result))
@@ -1348,7 +1348,7 @@ class ACSBatchTests(unittest.TestCase):
 
             def goto(self, url, **_kwargs):
                 self.url = url
-                self.body_text = "Article abstract brought to you by TSINGHUA UNIVERSITY CHINA"
+                self.body_text = "Article abstract brought to you by EXAMPLE UNIVERSITY"
 
         cfg = Config(
             output_dir="out",
@@ -1372,7 +1372,7 @@ class ACSBatchTests(unittest.TestCase):
 
         def resolve_challenge(_page, _result, **_kwargs):
             page.url = "https://www.worldscientific.com/"
-            page.body_text = "brought to you by TSINGHUA UNIVERSITY CHINA"
+            page.body_text = "brought to you by EXAMPLE UNIVERSITY"
             return True
 
         downloader._wait_for_challenge = resolve_challenge  # type: ignore[method-assign]
@@ -1689,7 +1689,7 @@ class ACSBatchTests(unittest.TestCase):
         self.assertIn("athensWayfSearch=Example+University", page.goto_url)
         self.assertIn("openathens_entry", [event["state"] for event in result.events])
 
-    def test_annual_reviews_openathens_page_selects_tsinghua(self):
+    def test_annual_reviews_openathens_page_selects_example_institution(self):
         class FakePage:
             url = "https://www.annualreviews.org/session/ext/athens?url=%2Fcontent%2Fjournals%2F10.1146%2Fexample&athensWayfSearch=Example University"
 
@@ -1734,7 +1734,7 @@ class ACSBatchTests(unittest.TestCase):
         self.assertFalse(downloader._click_openathens_entry(FakePage(), result))
         self.assertEqual(result.events, [])
 
-    def test_openathens_wayfinder_does_not_use_hardcoded_tsinghua_entity(self):
+    def test_openathens_wayfinder_does_not_use_hardcoded_example_entity(self):
         class FakePage:
             url = "https://wayfinder.openathens.net/?return=https%3A%2F%2Fconnect.openathens.net%2Fsaml%2F2%2Fauth%3Fr%3Dhttps%253A%252F%252Fconnect.openathens.net%252Foidc%252Fauth"
 
@@ -1764,7 +1764,7 @@ class ACSBatchTests(unittest.TestCase):
         self.assertEqual(page.goto_url, "")
         self.assertEqual(result.events, [])
 
-    def test_openathens_wayfinder_does_not_use_tsinghua_entity_for_other_institution(self):
+    def test_openathens_wayfinder_does_not_use_example_entity_for_other_institution(self):
         class FakePage:
             url = "https://wayfinder.openathens.net/?return=https%3A%2F%2Fconnect.openathens.net%2Fsaml%2F2%2Fauth%3Fr%3Dhttps%253A%252F%252Fconnect.openathens.net%252Foidc%252Fauth"
 
@@ -1788,9 +1788,9 @@ class ACSBatchTests(unittest.TestCase):
         self.assertFalse(downloader._select_openathens_wayfinder(FakePage(), result))
         self.assertEqual(result.events, [])
 
-    def test_select_institution_does_not_fill_tsinghua_login_page(self):
+    def test_select_institution_does_not_fill_example_login_page(self):
         class FakePage:
-            url = "https://id.tsinghua.edu.cn/do/off/ui/auth/login/form/example/1"
+            url = "https://idp.example.edu/do/off/ui/auth/login/form/example/1"
 
             def locator(self, _selector):
                 raise AssertionError("should not locate inputs on Example University login page")
@@ -1808,9 +1808,9 @@ class ACSBatchTests(unittest.TestCase):
         downloader._select_institution(FakePage(), result)
         self.assertEqual(result.events, [])
 
-    def test_sso_entry_does_not_click_tsinghua_login_page(self):
+    def test_sso_entry_does_not_click_example_login_page(self):
         class FakePage:
-            url = "https://id.tsinghua.edu.cn/do/off/ui/auth/login/form/example/1"
+            url = "https://idp.example.edu/do/off/ui/auth/login/form/example/1"
 
             def evaluate(self, *_args, **_kwargs):
                 raise AssertionError("should not evaluate or click on human login page")
@@ -2232,7 +2232,7 @@ class ACSBatchTests(unittest.TestCase):
             return None, ""
 
         def fake_complete_login(page, _result):
-            page.url = "https://idp.tsinghua.edu.cn/idp/profile/SAML2/Redirect/SSO"
+            page.url = "https://idp.example.edu/idp/profile/SAML2/Redirect/SSO"
             page.body_text = (
                 "Web Login Service - Unsupported Request "
                 "The application you have accessed is not registered for use with this service."
@@ -3742,6 +3742,54 @@ class ACSBatchTests(unittest.TestCase):
             self.assertEqual(lines[-1]["status"], "failed")
             manifest = json.loads((base / "run" / "complete" / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest[0]["reason"], "skipped_cached_attempt")
+
+    def test_attempt_cache_retries_the_failed_uncached_doi(self):
+        class FakeContext:
+            def close(self):
+                return None
+
+        class FakeDownloader(PublisherBatchDownloader):
+            def __init__(self, config):
+                super().__init__(config, profile=WILEY_PROFILE)
+                self.fetched = []
+
+            def _launch_context(self):
+                return FakeContext()
+
+            def fetch_one(self, _context, record, _run_dir):
+                self.fetched.append(record.doi)
+                return DownloadResult(
+                    doi=record.doi,
+                    status="failed",
+                    reason="pdf_not_captured",
+                    state="pdf_not_captured",
+                )
+
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cache_path = base / "attempts.jsonl"
+            cache_path.write_text(
+                json.dumps({"doi": "10.1002/skip", "status": "failed"}) + "\n",
+                encoding="utf-8",
+            )
+            cfg = Config(
+                output_dir=str(base / "out"),
+                cache_dir=str(base / "cache"),
+                cookie_path=str(base / "cookies.json"),
+                chrome_profile_dir=str(base / "profile"),
+                carsi_cookie_dir=str(base / "carsi"),
+            )
+            downloader = FakeDownloader(cfg)
+
+            downloader.run_records(
+                [PaperRecord(doi="10.1002/skip"), PaperRecord(doi="10.1002/new")],
+                base / "run",
+                retry_failed=True,
+                attempt_cache=cache_path,
+                skip_attempted=True,
+            )
+
+            self.assertEqual(downloader.fetched, ["10.1002/new", "10.1002/new"])
 
     def test_text_match_requires_doi_or_title_evidence(self):
         record = PaperRecord(doi="10.1111/dmcn.70356", title="")

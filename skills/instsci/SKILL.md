@@ -7,13 +7,13 @@ description: Use when working with the InstSci project, publisher PDF retrieval,
 
 ## Core Rule
 
-Use this skill as the project entry point for InstSci work. The implementation and project-specific rules live in the repository root containing `AGENTS.md` and `pyproject.toml`.
+Use this self-contained skill as the project entry point for normal InstSci CLI work. A source checkout is required only for development tasks.
 
 ## Startup
 
-1. Work from the InstSci repository root unless the user explicitly names another checkout.
-2. Read `AGENTS.md` before changing behavior or reporting publisher PDF results.
-3. For continuation, recall, migration, or "previous task" questions, use the `chatmem` skill/MCP first. Treat indexed history as evidence, not approved startup rules.
+1. For normal CLI use, work from the user's research project or chosen output directory; do not require an InstSci source checkout.
+2. For code changes, locate the checkout containing `AGENTS.md` and `pyproject.toml`, work from that root, and read `AGENTS.md` first. When a checkout is already present during publisher work, also treat its `AGENTS.md` and `instsci/data/*.json` as authoritative.
+3. For continuation, recall, migration, or "previous task" questions, use the `chatmem` skill/MCP first when it is available. Treat indexed history as evidence, not approved startup rules.
 4. For publisher PDF, closed-access, institution-login, or capability-matrix tasks, also read `instsci/data/institutional_identity_policy.json` or run:
 
 ```powershell
@@ -26,7 +26,7 @@ When InstSci MCP tools are available, use them as the structured context bridge 
 
 - `get_institutional_identity_policy`: load route-selection policy before closed-access planning.
 - `get_publisher_access_catalog`: inspect publisher route templates, login hints, persistence stores, and HTTP preflight limits.
-- `get_publisher_browser_verification_matrix`: inspect prior browser-backed publisher evidence.
+- `get_publisher_capability_summary`: inspect the public route-planning summary; it contains no browser or entitlement verdicts.
 - `plan_publisher_pdf_workflow`: build the correct visible CLI command and identify whether a subscription institution is still required.
 
 Use MCP `search_papers`, `get_paper_metadata`, and `fetch_paper` for metadata, Open Access lookup, DOI resolution, or non-final retrieval attempts. For publisher PDF downloads, closed-access verification, capability matrices, or final support verdicts, MCP is planning/context only; the actual evidence must come from the visible CloakBrowser workflow started by `instsci papers`, `instsci publisher-batch`, `PublisherBatchDownloader`, or `ACSCloakBatchDownloader`.
@@ -64,7 +64,8 @@ instsci elsevier-setup --api-key YOUR_ELSEVIER_KEY --validate
 ## Institution Route
 
 - Do not default to Example University or any other school.
-- Resolve subscription institution in this order: explicit `--institution`, `config.carsi_idp_name`, `config.school`, then ask the user.
+- Resolve subscription institution in this order: explicit `--institution`, `config.carsi_idp_name`, `config.institution_name_en`, `config.institution_name_zh`, `config.school`, then ask the user.
+- When the public placeholder directory does not contain the user's institution, use MCP `configure_institution` or the CLI institution-name options instead of requiring a directory entry.
 - Prefer publisher broker, Shibboleth, OpenAthens, CARSI, or configured WAYFless institution links before WebVPN.
 - Use WebVPN only when the configured institution has a WebVPN gateway and that route is browser-verified for the publisher.
 - Do not treat `cookies.json` or `carsi_cookie_dir/*.json` as a full reusable login state; they are preflight/supporting assets, not final evidence.
@@ -94,8 +95,11 @@ instsci zotero sync .\runs\papers --attachment-mode linked_file
 ```
 
 `search` queries Semantic Scholar, OpenAlex, and Crossref by default and merges
-records by normalized DOI. Treat citation counts as source-specific metadata;
-do not describe the maximum merged value as a single authoritative count.
+records by normalized DOI. Title-and-year fallback is allowed only when at least
+one record lacks a DOI; conflicting non-empty DOI values remain separate. Treat
+citation counts as source-specific metadata; do not describe the maximum merged
+value as a single authoritative count. Check `source_status` before interpreting
+zero hits because a provider can be rate-limited or unavailable.
 `search --output` creates reviewable JSON or CSV. `select` uses one-based result
 indices, removes duplicate DOI values, skips rows without a DOI, and writes a
 neighboring selection report. Do not silently acquire every search hit when the
@@ -134,7 +138,7 @@ Before running large closed-access batches, inspect publisher readiness with the
 instsci publisher-doctor --matrix
 ```
 
-`publisher-doctor --matrix` is a planning view, not a fresh access verdict. It summarizes the local publisher capability matrix with `ready`, `prewarm_required`, `waf_risky`, `unsupported`, `batch_recommendation`, `known_blocker`, and machine-readable `suggested_paths`.
+`publisher-doctor --matrix` is a planning view, not a fresh access verdict. It summarizes the canonical public capability summary with `ready`, `prewarm_required`, `waf_risky`, `route_not_published`, `unclassified`, `batch_recommendation`, `known_blocker`, and machine-readable `suggested_paths`.
 
 Use this panel to decide whether to run a normal batch, run a single-DOI prewarm first, switch to a manual browser check, retry later, or avoid a bulk run. For final publisher PDF verdicts, still use the visible CloakBrowser-backed workflow.
 

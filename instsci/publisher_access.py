@@ -12,7 +12,7 @@ from .publisher_pdf_router import build_pdf_candidates, discover_pdf_candidates_
 from .publisher_profiles import get_publisher_profile, list_publisher_profiles
 
 CATALOG_PATH = Path(__file__).parent / "data" / "publisher_access_catalog.json"
-BROWSER_VERIFICATION_MATRIX_PATH = Path(__file__).parent / "data" / "publisher_browser_verification_matrix.json"
+PUBLIC_CAPABILITY_SUMMARY_PATH = Path(__file__).parent / "data" / "publisher_public_capability_summary.json"
 INSTITUTIONAL_IDENTITY_POLICY_PATH = Path(__file__).parent / "data" / "institutional_identity_policy.json"
 
 DEFAULT_HEADERS = {
@@ -30,9 +30,9 @@ def load_publisher_access_catalog(path: str | Path | None = None) -> dict[str, A
     return json.loads(catalog_path.read_text(encoding="utf-8"))
 
 
-def load_publisher_browser_verification_matrix(path: str | Path | None = None) -> dict[str, Any]:
-    """Load browser-backed publisher PDF verification verdicts."""
-    matrix_path = Path(path) if path else BROWSER_VERIFICATION_MATRIX_PATH
+def load_publisher_capability_summary(path: str | Path | None = None) -> dict[str, Any]:
+    """Load the public route-planning summary, which contains no browser verdicts."""
+    matrix_path = Path(path) if path else PUBLIC_CAPABILITY_SUMMARY_PATH
     return json.loads(matrix_path.read_text(encoding="utf-8"))
 
 

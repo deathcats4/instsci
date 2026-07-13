@@ -50,6 +50,7 @@ def build_search_payload(
     *,
     year_range: str = "",
     source: str = "semantic_scholar",
+    source_status: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     records = [result_to_record(result, index, source=source) for index, result in enumerate(results, 1)]
     sources = list(
@@ -66,6 +67,7 @@ def build_search_payload(
         "query": query,
         "year_range": year_range,
         "sources": sources,
+        "source_status": dict(source_status or {}),
         "count": len(records),
         "results": records,
     }

@@ -31,10 +31,21 @@ instsci/_browsers/
 cookies.json
 carsi_cookies/
 chrome-profile/
+browser-profile/
+cnki-profile/
 worker-profiles/
+*.har
+storage_state*.json
+*.pem
+*.key
+*.p12
+*.pfx
 private-evidence/
 private_evidence/
 *.private.json
+
+# Local, non-release prototypes
+prototypes/
 
 # Local diagnostics
 *_doctor_full_report.json
