@@ -342,7 +342,8 @@ def _print_publisher_matrix_report(report: dict[str, object]) -> None:
         f"ready={summary.get('ready', 0)} | "
         f"prewarm={summary.get('prewarm_required', 0)} | "
         f"waf-risk={summary.get('waf_risky', 0)} | "
-        f"unsupported={summary.get('unsupported', 0)} | "
+        f"route-not-published={summary.get('route_not_published', 0)} | "
+        f"unclassified={summary.get('unclassified', 0)} | "
         f"batch-ok={summary.get('batch_ok', 0)} | "
         f"guarded={summary.get('batch_guarded', 0)}"
         "[/dim]"
@@ -3239,16 +3240,24 @@ def search(
     console.print(f"[bold]Searching:[/bold] {query}")
     try:
         config = Config.load()
-        results = multi_search.search(
+        search_response = multi_search.search_with_status(
             query,
             limit=limit,
             year_range=year or None,
             sources=sources,
             email=config.email,
         )
+        results = search_response.results
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2)
+
+    for source_name, status in search_response.source_status.items():
+        if status.get("status") != "success":
+            console.print(
+                f"[yellow]{source_name}: {status.get('status')}"
+                f"{f' ({status.get('detail')})' if status.get('detail') else ''}[/yellow]"
+            )
 
     if not results:
         console.print("[yellow]No results found.[/yellow]")
@@ -3261,7 +3270,7 @@ def search(
     table.add_column("Title", max_width=60)
     table.add_column("Authors", max_width=30)
     table.add_column("DOI", max_width=25)
-    table.add_column("Cites", width=5, justify="right")
+    table.add_column("Cites by source", max_width=32)
     table.add_column("Sources", max_width=28)
 
     for i, r in enumerate(results, 1):
@@ -3274,7 +3283,7 @@ def search(
             r.title[:60],
             authors_str[:30],
             r.doi[:25] if r.doi else r.arxiv_id[:25] if r.arxiv_id else "",
-            str(r.citation_count),
+            "; ".join(f"{name}: {count}" for name, count in r.citation_counts.items()),
             ", ".join(getattr(r, "sources", []) or ["semantic_scholar"]),
         )
 
@@ -3282,7 +3291,13 @@ def search(
 
     if output:
         try:
-            payload = build_search_payload(query, results, year_range=year, source="multi_source")
+            payload = build_search_payload(
+                query,
+                results,
+                year_range=year,
+                source="multi_source",
+                source_status=search_response.source_status,
+            )
             output_path = write_search_payload(payload, output)
         except (OSError, ValueError) as exc:
             console.print(f"[red]Could not write search results: {exc}[/red]")

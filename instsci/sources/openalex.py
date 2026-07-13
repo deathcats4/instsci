@@ -6,6 +6,7 @@ import logging
 import os
 
 from ..http_utils import request_with_retry
+from .errors import ProviderSearchError, classify_provider_exception
 from .semantic_scholar import SearchResult
 
 
@@ -45,6 +46,7 @@ def search(
     *,
     email: str = "",
     api_key: str = "",
+    raise_on_error: bool = False,
 ) -> list[SearchResult]:
     params: dict[str, object] = {"search": query, "per-page": min(max(limit, 1), 100)}
     filter_value = _year_filter(year_range)
@@ -55,13 +57,15 @@ def search(
         params["api_key"] = api_key
     if email:
         params["mailto"] = email
-    headers = {"User-Agent": f"instsci/0.1{f' (mailto:{email})' if email else ''}"}
+    headers = {"User-Agent": f"instsci/0.2.0a1{f' (mailto:{email})' if email else ''}"}
     try:
         response = request_with_retry("GET", OPENALEX_WORKS_API, params=params, headers=headers, timeout=30)
         response.raise_for_status()
         payload = response.json()
     except Exception as exc:
         logger.warning("OpenAlex search failed: %s", exc)
+        if raise_on_error:
+            raise ProviderSearchError("openalex", classify_provider_exception(exc), str(exc)) from exc
         return []
 
     results: list[SearchResult] = []

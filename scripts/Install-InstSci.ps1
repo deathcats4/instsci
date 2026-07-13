@@ -26,6 +26,9 @@ if (-not $skillDestination.StartsWith($skillsPrefix, [System.StringComparison]::
 if ((Test-Path -LiteralPath $skillDestination) -and -not $Force -and -not $DryRun) {
     throw "Skill destination already exists. Re-run with -Force to replace it: $skillDestination"
 }
+if (-not $SkipCli -and -not $Force -and -not $DryRun -and (Get-Command instsci -ErrorAction SilentlyContinue)) {
+    throw "InstSci CLI is already installed. Re-run with -Force to replace or upgrade it."
+}
 
 function Invoke-InstallCommand {
     param(
@@ -55,12 +58,25 @@ if (-not $SkipCli) {
     }
 
     switch ($selectedMethod) {
-        "uv" { Invoke-InstallCommand -Executable "uv" -Arguments @("tool", "install", "--force", $repoRoot) }
-        "pipx" { Invoke-InstallCommand -Executable "pipx" -Arguments @("install", "--force", $repoRoot) }
+        "uv" {
+            $arguments = @("tool", "install")
+            if ($Force) { $arguments += "--force" }
+            $arguments += $repoRoot
+            Invoke-InstallCommand -Executable "uv" -Arguments $arguments
+        }
+        "pipx" {
+            $arguments = @("install")
+            if ($Force) { $arguments += "--force" }
+            $arguments += $repoRoot
+            Invoke-InstallCommand -Executable "pipx" -Arguments $arguments
+        }
         "pip" {
             $python = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } elseif (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { $null }
             if (-not $python) { throw "Python 3.10+ is required when uv and pipx are unavailable." }
-            Invoke-InstallCommand -Executable $python -Arguments @("-m", "pip", "install", "--user", "--upgrade", $repoRoot)
+            $arguments = @("-m", "pip", "install", "--user")
+            if ($Force) { $arguments += "--upgrade" }
+            $arguments += $repoRoot
+            Invoke-InstallCommand -Executable $python -Arguments $arguments
         }
     }
 }

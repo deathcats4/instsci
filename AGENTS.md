@@ -11,7 +11,7 @@ Use this workflow whenever a user asks to download PDFs, test publisher access, 
    - Publisher PDF download, closed-access verification, or publisher capability verdicts require the built-in visible CloakBrowser workflow.
 2. Load the access policy before choosing an identity route.
    - Read `instsci/data/institutional_identity_policy.json`, or run `instsci identity-policy`.
-   - If `--institution`, `config.carsi_idp_name`, and `config.school` are all empty, ask for the user's own subscription institution.
+   - If `--institution`, `config.carsi_idp_name`, `config.institution_name_en`, `config.institution_name_zh`, and `config.school` are all empty, ask for the user's own subscription institution.
 3. Choose the least surprising route.
    - Prefer publisher broker / Shibboleth / OpenAthens / CARSI institution login when supported.
    - Use WebVPN only when the configured institution has a WebVPN gateway and that publisher path is browser-verified through the gateway.
@@ -63,7 +63,7 @@ For publisher PDF work, report each publisher or DOI with:
 ## Institutional Identity / Access Route Rule
 
 - Load `instsci/data/institutional_identity_policy.json` before choosing a closed-access PDF identity route. The CLI view is `instsci identity-policy`.
-- Default route selection is `auto`, not universal WebVPN and not any hard-coded school. Ask for the user's own subscription institution at the point of use when `--institution`, `config.carsi_idp_name`, and `config.school` are all empty.
+- Default route selection is `auto`, not universal WebVPN and not any hard-coded school. Ask for the user's own subscription institution at the point of use when `--institution`, `config.carsi_idp_name`, `config.institution_name_en`, `config.institution_name_zh`, and `config.school` are all empty.
 - For off-campus publisher access, prefer Shibboleth/OpenAthens institutional authentication when the publisher supports it. Use institution-specific WAYFless links when configured; if they fail, fall back to the standard publisher institution-selection flow.
 - Standard federated login flow is publisher login page -> Institutional/Shibboleth/OpenAthens/CARSI option -> federation group or institution search when shown -> user's own institution -> institution IdP. Do not assume any institution unless the user configured or selected it.
 - Prefer the publisher broker first; use WebVPN only when the configured institution has a WebVPN gateway and that publisher path is browser-verified through the gateway.

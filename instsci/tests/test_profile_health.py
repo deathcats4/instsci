@@ -24,7 +24,7 @@ class ProfileHealthTests(unittest.TestCase):
                 conn.execute("create table cookies (host_key text, name text, encrypted_value blob)")
                 conn.execute(
                     "insert into cookies (host_key, name, encrypted_value) values (?, ?, ?)",
-                    ("idp.tsinghua.edu.cn", "secret_session", b"not-returned"),
+                    ("idp.example.edu", "secret_session", b"not-returned"),
                 )
                 conn.execute(
                     "insert into cookies (host_key, name, encrypted_value) values (?, ?, ?)",
@@ -34,13 +34,13 @@ class ProfileHealthTests(unittest.TestCase):
             finally:
                 conn.close()
 
-            report = inspect_browser_profile(profile, ("tsinghua.edu.cn", "aps.org"))
+            report = inspect_browser_profile(profile, ("example.edu", "aps.org"))
 
         self.assertTrue(report["exists"])
-        self.assertEqual(report["domains"]["tsinghua.edu.cn"]["cookie_count"], 1)
+        self.assertEqual(report["domains"]["example.edu"]["cookie_count"], 1)
         self.assertEqual(report["domains"]["aps.org"]["cookie_count"], 1)
         serialized = str(report)
-        self.assertIn("idp.tsinghua.edu.cn", serialized)
+        self.assertIn("idp.example.edu", serialized)
         self.assertNotIn("secret_session", serialized)
         self.assertNotIn("not-returned", serialized)
 
@@ -100,7 +100,6 @@ class ProfileHealthTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 
 
 

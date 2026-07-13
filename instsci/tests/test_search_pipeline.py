@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
+from instsci import multi_search
 from instsci.cli import app
 from instsci.search_pipeline import (
     build_search_payload,
@@ -23,6 +24,7 @@ class SearchPipelineTests(TestCase):
             "pyrite uranium",
             [SearchResult(title="Paper", authors=["A", "B"], year=2024, doi="https://doi.org/10.1000/Test")],
             year_range="2020-",
+            source_status={"semantic_scholar": {"status": "success", "count": 1}},
         )
         with TemporaryDirectory() as tmp:
             json_path = write_search_payload(payload, Path(tmp) / "results.json")
@@ -31,6 +33,7 @@ class SearchPipelineTests(TestCase):
             csv_loaded = load_search_payload(csv_path)
 
         self.assertEqual(json_loaded["results"][0]["doi"], "10.1000/test")
+        self.assertEqual(json_loaded["source_status"]["semantic_scholar"]["count"], 1)
         self.assertEqual(csv_loaded["results"][0]["authors"], ["A", "B"])
 
     def test_selection_parser_supports_ranges_and_rejects_out_of_range(self) -> None:
@@ -57,7 +60,13 @@ class SearchPipelineTests(TestCase):
             SearchResult(title="Selected", authors=["A"], year=2024, doi="10.1000/selected"),
             SearchResult(title="No DOI", authors=["B"], year=2023, arxiv_id="2401.00001"),
         ]
-        with TemporaryDirectory() as tmp, patch("instsci.cli.multi_search.search", return_value=results):
+        response = multi_search.MultiSearchResponse(
+            results=[multi_search._from_provider(result, "semantic_scholar") for result in results],
+            source_status={"semantic_scholar": {"status": "success", "count": 2}},
+        )
+        with TemporaryDirectory() as tmp, patch(
+            "instsci.cli.multi_search.search_with_status", return_value=response
+        ):
             search_path = Path(tmp) / "search.json"
             doi_path = Path(tmp) / "selected_dois.txt"
             search_result = runner.invoke(app, ["search", "topic", "--output", str(search_path)])
@@ -71,6 +80,7 @@ class SearchPipelineTests(TestCase):
         self.assertEqual(search_result.exit_code, 0, search_result.output)
         self.assertEqual(select_result.exit_code, 0, select_result.output)
         self.assertEqual(payload["query"], "topic")
+        self.assertEqual(payload["source_status"]["semantic_scholar"]["status"], "success")
         self.assertEqual(dois, ["10.1000/selected"])
 
     def test_readme_and_skill_expose_discovery_to_zotero_flow(self) -> None:

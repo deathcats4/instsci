@@ -1,9 +1,11 @@
+import asyncio
 from unittest import TestCase
 from unittest.mock import patch
 
 from instsci import multi_search
 from instsci.search_pipeline import result_to_record
 from instsci.sources.semantic_scholar import SearchResult
+from instsci.sources.errors import ProviderSearchError
 
 
 class MultiSearchTests(TestCase):
@@ -35,14 +37,62 @@ class MultiSearchTests(TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].doi, "10.1000/example")
 
+    def test_same_title_and_year_with_different_dois_stays_separate(self) -> None:
+        first = SearchResult(title="Same title", year=2024, doi="10.1000/first")
+        second = SearchResult(title="Same title", year=2024, doi="10.1000/second")
+        with (
+            patch("instsci.multi_search.semantic_scholar.search", return_value=[first]),
+            patch("instsci.multi_search.openalex.search", return_value=[second]),
+        ):
+            results = multi_search.search("topic", sources="semantic_scholar,openalex")
+
+        self.assertEqual([result.doi for result in results], ["10.1000/first", "10.1000/second"])
+
     def test_provider_failure_degrades_to_remaining_sources(self) -> None:
         crossref_result = SearchResult(title="Available", doi="10.1000/available")
         with (
             patch("instsci.multi_search.semantic_scholar.search", side_effect=RuntimeError("offline")),
             patch("instsci.multi_search.crossref.search", return_value=[crossref_result]),
         ):
-            results = multi_search.search("topic", sources="semantic_scholar,crossref")
-        self.assertEqual([result.doi for result in results], ["10.1000/available"])
+            response = multi_search.search_with_status("topic", sources="semantic_scholar,crossref")
+        self.assertEqual([result.doi for result in response.results], ["10.1000/available"])
+        self.assertEqual(response.source_status["semantic_scholar"]["status"], "error")
+        self.assertEqual(response.source_status["crossref"], {"status": "success", "count": 1})
+
+    def test_provider_rate_limit_is_distinct_from_zero_results(self) -> None:
+        with patch(
+            "instsci.multi_search.semantic_scholar.search",
+            side_effect=ProviderSearchError("semantic_scholar", "rate_limited", "HTTP 429"),
+        ):
+            response = multi_search.search_with_status("topic", sources="semantic_scholar")
+
+        self.assertEqual(response.results, [])
+        self.assertEqual(response.source_status["semantic_scholar"]["status"], "rate_limited")
+
+    def test_mcp_reports_source_specific_citations_and_provider_status(self) -> None:
+        from instsci import mcp_server
+
+        response = multi_search.MultiSearchResponse(
+            results=[
+                multi_search.MergedSearchResult(
+                    title="Paper",
+                    doi="10.1000/paper",
+                    sources=["semantic_scholar", "openalex"],
+                    citation_count=15,
+                    citation_counts={"semantic_scholar": 12, "openalex": 15},
+                )
+            ],
+            source_status={
+                "semantic_scholar": {"status": "rate_limited", "count": 0},
+                "openalex": {"status": "success", "count": 1},
+            },
+        )
+        with patch("instsci.mcp_server.multi_search.search_with_status", return_value=response):
+            text = asyncio.run(mcp_server.search_papers("topic"))
+
+        self.assertIn("semantic_scholar: rate_limited", text)
+        self.assertIn("Semantic Scholar 12; Openalex 15", text)
+        self.assertNotIn("**Citations:** 15", text)
 
     def test_export_record_includes_sources_and_citation_counts(self) -> None:
         result = multi_search.MergedSearchResult(

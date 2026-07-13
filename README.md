@@ -1,5 +1,7 @@
 # InstSci Workflow
 
+[![Windows CI](https://github.com/deathcats4/instsci-workflow/actions/workflows/ci.yml/badge.svg)](https://github.com/deathcats4/instsci-workflow/actions/workflows/ci.yml)
+
 InstSci Workflow is a public preview build for researchers who want a cleaner way to collect papers, verify access, and hand finished PDFs into Zotero.
 
 It is based on the MIT-licensed InstSci project and keeps the core idea simple: try Open Access first, use a visible browser only when publisher access really needs it, and leave behind a manifest that explains what happened instead of a pile of mystery folders.
@@ -46,7 +48,8 @@ powershell -ExecutionPolicy Bypass -File .\instsci-workflow\scripts\Install-Inst
 
 The installer places the skill at the standard `$CODEX_HOME/skills/instsci` location
 (normally `~/.codex/skills/instsci`). It prefers `uv tool`, then `pipx`, and finally
-the current Python environment. Preview every action without changing the machine:
+the current Python environment. Existing CLI or skill installations are not
+replaced unless `-Force` is supplied. Preview every action without changing the machine:
 
 ```powershell
 .\scripts\Install-InstSci.ps1 -DryRun
@@ -132,8 +135,9 @@ instsci zotero sync .\runs\papers --attachment-mode linked_file
 
 `search` queries Semantic Scholar, OpenAlex, and Crossref by default; use
 `--sources` to choose a subset. Results are merged by normalized DOI, with a
-title-and-year fallback when one provider lacks a DOI. Its JSON output preserves
-the query, contributing sources, source-specific citation counts, result indices,
+title-and-year fallback only when at least one candidate lacks a DOI; conflicting
+non-empty DOI values always remain separate. Its JSON output preserves the query,
+per-provider request status, contributing sources, source-specific citation counts, result indices,
 metadata, and identifiers. `select` writes both the DOI
 file consumed by `papers` and a neighboring `.selection.json` report that records
 selected, skipped, missing-DOI, and duplicate-DOI rows.
@@ -181,7 +185,10 @@ instsci evidence list
 The default index is `~/.instsci/private-evidence/index.json`. Registration
 stores the original run path and manifest SHA-256; it does not copy PDFs,
 screenshots, cookies, or browser profiles. `public-audit` rejects private-evidence
-directories and `*.private.json` files inside a public package.
+directories, `*.private.json`, screenshots, HAR/storage-state files, browser
+profiles, key material, cleartext secrets, and local Windows/POSIX user paths.
+In a Git checkout it scans tracked plus non-ignored untracked files, so ignored
+local prototypes are not mistaken for release contents.
 
 ## Review Checks
 
@@ -193,13 +200,10 @@ python -B -m instsci.cli public-audit .
 python -B -m instsci.cli doctor --full --package-path .
 ```
 
-Current package validation before publication:
-
-- Python compile: 76/76 files passed.
-- Unit and regression tests: 304/304 passed (`1` live publisher smoke test skipped unless explicitly enabled).
-- Public package audit: passed.
-- Zip hygiene scan: passed.
-- Institution-specific residue scan: passed.
+Every push and pull request runs the Windows CI release gate: the complete unit
+and regression suite, `public-audit`, wheel/sdist build, `twine check`, and a
+wheel-content check that rejects bundled `instsci.tests`. Run the commands above
+locally before pushing; rely on the CI result instead of a static test count.
 
 ## Access and Compliance
 

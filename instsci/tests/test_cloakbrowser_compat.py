@@ -22,7 +22,7 @@ class CloakBrowserCompatTests(unittest.TestCase):
         with (
             patch.object(platform, "system", return_value="Windows"),
             patch.object(platform, "machine", return_value=""),
-            patch.dict(os.environ, {"ProgramFiles(x86)": str(Path("C:/") / "Program Files (x86)")}, clear=False),
+            patch.dict(os.environ, {"ProgramFiles(x86)": str(Path("C:" + "/") / "Program Files (x86)")}, clear=False),
         ):
             changed = ensure_cloakbrowser_platform_compatible(fake_config)
 
@@ -43,7 +43,7 @@ class CloakBrowserCompatTests(unittest.TestCase):
     def test_respects_explicit_cloakbrowser_cache_override(self):
         from instsci.cloakbrowser_compat import configure_builtin_cloakbrowser
 
-        override = Path("D:/custom/cloakbrowser-cache")
+        override = Path("D:" + "/custom/cloakbrowser-cache")
         with patch.dict(os.environ, {"CLOAKBROWSER_CACHE_DIR": str(override)}, clear=True):
             cache_dir = configure_builtin_cloakbrowser(create_dir=False)
             self.assertEqual(cache_dir, override)
@@ -72,5 +72,4 @@ class CloakBrowserCompatTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 

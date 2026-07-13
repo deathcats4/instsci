@@ -52,18 +52,17 @@ class PublisherAccessCatalogTests(unittest.TestCase):
             self.assertIn("browser_profile_dir", entry["persistence"]["stores"])
             self.assertTrue(entry["link_characteristics"])
 
-    def test_browser_verification_matrix_is_project_asset(self):
-        from instsci.publisher_access import load_publisher_browser_verification_matrix
+    def test_public_capability_summary_is_project_asset(self):
+        from instsci.publisher_access import load_publisher_capability_summary
 
-        matrix = load_publisher_browser_verification_matrix()
+        matrix = load_publisher_capability_summary()
 
         self.assertTrue(set(matrix["publishers"]).issubset(set(list_publisher_profiles())))
-        self.assertIn("detailed local evidence is intentionally omitted", matrix["verdict_source"])
-        self.assertIn("fresh visible browser evidence", matrix["scope"])
-        self.assertIn("note", matrix["summary"])
+        self.assertIn("Fresh visible CloakBrowser evidence", matrix["scope"])
+        self.assertIn("No browser verification", matrix["evidence_boundary"])
         self.assertGreaterEqual(len(matrix["publishers"]), 1)
-        self.assertNotIn("observed_pdf_candidates", matrix["publishers"]["elsevier"])
-        self.assertNotIn("observed_pdf_candidates", matrix["publishers"]["iop"])
+        self.assertNotIn("browser_verified", matrix["publishers"]["elsevier"])
+        self.assertNotIn("last_browser_verification", matrix)
         self.assertIn("known_blocker", matrix["publishers"]["elsevier"])
 
     def test_institutional_identity_policy_records_webvpn_limits(self):
@@ -149,5 +148,4 @@ class PublisherAccessCatalogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 

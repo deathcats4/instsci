@@ -6,6 +6,7 @@ import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from click import unstyle
 from typer.testing import CliRunner
 
 import instsci.config as config_module
@@ -30,35 +31,38 @@ class PublicLanguageTests(unittest.TestCase):
 
     def test_config_help_prefers_access_url_over_legacy_gateway_option(self):
         result = self.runner.invoke(app, ["config-cmd", "--help"])
+        output = unstyle(result.output)
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--access-url", result.output)
-        self.assertIn("--federated-enable", result.output)
-        self.assertIn("--federated-school", result.output)
-        self.assertNotIn("--webvpn-url", result.output)
-        self.assertNotIn("--carsi-enable", result.output)
+        self.assertIn("--access-url", output)
+        self.assertIn("--federated-enable", output)
+        self.assertIn("--federated-school", output)
+        self.assertNotIn("--webvpn-url", output)
+        self.assertNotIn("--carsi-enable", output)
 
     def test_publisher_batch_help_exposes_profile_selection(self):
         result = self.runner.invoke(app, ["publisher-batch", "--help"])
+        output = unstyle(result.output)
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--publisher", result.output)
-        self.assertIn("--institution", result.output)
-        self.assertIn("profile", result.output.lower())
-        self.assertIn("--carsi-portal", result.output)
-        self.assertIn("resource portal", result.output)
+        self.assertIn("--publisher", output)
+        self.assertIn("--institution", output)
+        self.assertIn("profile", output.lower())
+        self.assertIn("--carsi-portal", output)
+        self.assertIn("resource portal", output)
 
     def test_papers_help_exposes_recommended_browser_workflow(self):
         result = self.runner.invoke(app, ["papers", "--help"])
+        output = unstyle(result.output)
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("oa-first", result.output.lower())
-        self.assertIn("browser workflow", result.output.lower())
-        self.assertIn("--publisher", result.output)
-        self.assertIn("--institution", result.output)
-        self.assertIn("--detach", result.output)
-        self.assertIn("--carsi-portal", result.output)
-        self.assertIn("resource portal", result.output)
+        self.assertIn("oa-first", output.lower())
+        self.assertIn("browser workflow", output.lower())
+        self.assertIn("--publisher", output)
+        self.assertIn("--institution", output)
+        self.assertIn("--detach", output)
+        self.assertIn("--carsi-portal", output)
+        self.assertIn("resource portal", output)
 
     def test_jobs_help_exposes_long_running_controls(self):
         result = self.runner.invoke(app, ["jobs", "--help"])
@@ -71,21 +75,23 @@ class PublicLanguageTests(unittest.TestCase):
 
     def test_elsevier_setup_help_describes_global_config(self):
         result = self.runner.invoke(app, ["elsevier-setup", "--help"])
+        output = unstyle(result.output)
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("global", result.output.lower())
-        self.assertIn("--test-doi", result.output)
-        self.assertIn("does not bind", result.output)
+        self.assertIn("global", output.lower())
+        self.assertIn("--test-doi", output)
+        self.assertIn("does not bind", output)
 
     def test_publisher_doctor_help_exposes_reusable_verification_asset(self):
         result = self.runner.invoke(app, ["publisher-doctor", "--help"])
+        output = unstyle(result.output)
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--publisher", result.output)
-        self.assertIn("--output", result.output)
-        self.assertIn("verify", result.output.lower())
-        self.assertIn("HTTP preflight", result.output)
-        self.assertIn("browser", result.output.lower())
+        self.assertIn("--publisher", output)
+        self.assertIn("--output", output)
+        self.assertIn("verify", output.lower())
+        self.assertIn("HTTP preflight", output)
+        self.assertIn("browser", output.lower())
 
     def test_agents_requires_builtin_browser_for_publisher_pdf_verdicts(self):
         text = Path("AGENTS.md").read_text(encoding="utf-8")
@@ -113,11 +119,12 @@ class PublicLanguageTests(unittest.TestCase):
 
     def test_setup_help_exposes_one_step_environment_setup(self):
         result = self.runner.invoke(app, ["setup", "--help"])
+        output = unstyle(result.output)
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--school", result.output)
-        self.assertIn("--check", result.output)
-        self.assertIn("environment", result.output.lower())
+        self.assertIn("--school", output)
+        self.assertIn("--check", output)
+        self.assertIn("environment", output.lower())
 
     def test_setup_configures_school_federated_login_and_directories(self):
         with TemporaryDirectory() as tmp:
@@ -247,5 +254,4 @@ class PublicLanguageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 

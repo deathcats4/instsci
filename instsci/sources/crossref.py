@@ -7,6 +7,7 @@ import logging
 from bs4 import BeautifulSoup
 
 from ..http_utils import request_with_retry
+from .errors import ProviderSearchError, classify_provider_exception
 from .semantic_scholar import SearchResult
 
 
@@ -40,20 +41,29 @@ def _year_filter(year_range: str | None) -> str:
     return ",".join(values)
 
 
-def search(query: str, limit: int = 10, year_range: str | None = None, *, email: str = "") -> list[SearchResult]:
+def search(
+    query: str,
+    limit: int = 10,
+    year_range: str | None = None,
+    *,
+    email: str = "",
+    raise_on_error: bool = False,
+) -> list[SearchResult]:
     params: dict[str, object] = {"query.bibliographic": query, "rows": min(max(limit, 1), 100)}
     filter_value = _year_filter(year_range)
     if filter_value:
         params["filter"] = filter_value
     if email:
         params["mailto"] = email
-    headers = {"User-Agent": f"instsci/0.1{f' (mailto:{email})' if email else ''}"}
+    headers = {"User-Agent": f"instsci/0.2.0a1{f' (mailto:{email})' if email else ''}"}
     try:
         response = request_with_retry("GET", CROSSREF_WORKS_API, params=params, headers=headers, timeout=30)
         response.raise_for_status()
         items = (response.json().get("message") or {}).get("items") or []
     except Exception as exc:
         logger.warning("Crossref search failed: %s", exc)
+        if raise_on_error:
+            raise ProviderSearchError("crossref", classify_provider_exception(exc), str(exc)) from exc
         return []
 
     results: list[SearchResult] = []

@@ -24,6 +24,8 @@ from instsci.publisher_profiles import get_publisher_profile, infer_publisher_pr
 from instsci.publisher_matrix import (
     PublisherMatrixEntry,
     build_publisher_matrix_report,
+    get_publisher_matrix_entry,
+    load_publisher_matrix,
     manifest_next_action,
     manifest_suggested_paths,
     manifest_workflow,
@@ -484,6 +486,35 @@ class StatusContractTests(unittest.TestCase):
         self.assertEqual(items["elsevier"]["batch_recommendation"], "single_doi_prewarm_then_batch")
         self.assertEqual(items["onepetro"]["batch_recommendation"], "single_doi_only")
         self.assertIn("manual_browser_single_doi", items["onepetro"]["suggested_paths"])
+
+    def test_unknown_and_invalid_matrix_entries_are_not_batch_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            matrix_path = Path(tmp) / "matrix.json"
+            matrix_path.write_text(
+                json.dumps({"publishers": {"bad": {"status": "invalid"}}}),
+                encoding="utf-8",
+            )
+            invalid = load_publisher_matrix(matrix_path)["bad"]
+
+        self.assertEqual(invalid.status, "unclassified")
+        self.assertEqual(invalid.batch_policy, "single_only")
+        with patch("instsci.publisher_matrix.load_publisher_matrix", return_value={}):
+            unknown = get_publisher_matrix_entry("unknown-publisher")
+        report = build_publisher_matrix_report(
+            "unknown-publisher",
+            entries={},
+        )
+        self.assertEqual(unknown.status, "unclassified")
+        self.assertEqual(report["items"][0]["batch_recommendation"], "single_doi_only")
+        self.assertEqual(report["summary"]["batch_ok"], 0)
+
+    def test_matrix_uses_canonical_publisher_key_for_aliases(self) -> None:
+        springer = PublisherMatrixEntry(key="springer", status="ready")
+        report = build_publisher_matrix_report("springer-nature", entries={"springer": springer})
+
+        self.assertEqual(report["publisher"], "springer")
+        self.assertEqual(report["items"][0]["publisher"], "springer")
+        self.assertTrue(report["items"][0]["configured"])
 
     def test_browser_doctor_probe_keeps_entitlement_and_waf_distinct(self) -> None:
         probe = browser_doctor._POWERSHELL_PROBE

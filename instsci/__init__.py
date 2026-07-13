@@ -4,7 +4,7 @@ from .config import Config
 from .models import FetchResult, NextAction, Paper
 
 __all__ = ["PaperFetcher", "Paper", "FetchResult", "NextAction", "Config"]
-__version__ = "0.1.1"
+__version__ = "0.2.0a1"
 
 
 def __getattr__(name: str):

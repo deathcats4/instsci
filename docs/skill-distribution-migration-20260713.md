@@ -27,7 +27,7 @@ The aggregate covers every file under `skills/instsci/` plus
 - `skills/instsci/scripts/audit_skill.ps1`: passed, 11 files checked, 0 problems
 - Installer distribution tests: 5 passed
 - Full Python suite: 304 passed, 1 live publisher smoke test skipped
-- `D:/InstSci/scripts/Check.ps1 -Full`: passed
+- Workspace `scripts/Check.ps1 -Full`: passed
 
 The installer dry-run test uses a repository-local nonexistent Codex home and
 confirms that no directory is created. No global Codex skill, Python tool

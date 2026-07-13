@@ -173,12 +173,12 @@ class WebVPNAuth:
         """Check if the current session can access content through the gateway."""
         # For EasyConnect, try fetching through the gateway directly.
         # For campus gateways, convert URL first.
-        if self.config.proxy_url:
-            # EasyConnect: no URL conversion needed, connector handles routing.
-            test_url = TEST_URL
-        else:
-            test_url = self.convert_url(TEST_URL)
         try:
+            if self.config.proxy_url:
+                # EasyConnect: no URL conversion needed, connector handles routing.
+                test_url = TEST_URL
+            else:
+                test_url = self.convert_url(TEST_URL)
             resp = self.session.get(test_url, timeout=15, allow_redirects=True)
             # If redirected to CAS login page, session is expired
             if "cas" in resp.url.lower() or "login" in resp.url.lower():
@@ -186,7 +186,7 @@ class WebVPNAuth:
                 return False
             if resp.status_code == 200:
                 return True
-        except requests.RequestException as e:
+        except (requests.RequestException, ValueError) as e:
             logger.warning("Session validation failed: %s", e)
         return False
 

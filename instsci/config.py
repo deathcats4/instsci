@@ -28,7 +28,7 @@ class Config:
     cnki_profile_dir: str = ""  # Dedicated persistent CNKI browser profile
     private_evidence_dir: str = ""  # External index for private browser evidence references
     carsi_enabled: bool = False  # Enable CARSI/Shibboleth federated auth
-    carsi_idp_name: str = ""  # University name for CARSI WAYF (e.g. "中国海洋大学")
+    carsi_idp_name: str = ""  # University name for CARSI WAYF (e.g. "Example University")
     institution_name_zh: str = ""  # User's subscription institution name in Chinese/local form
     institution_name_en: str = ""  # User's subscription institution name in English form
     institution_idp_host_suffixes: tuple[str, ...] = ()  # Institution IdP hosts treated as user-login pages

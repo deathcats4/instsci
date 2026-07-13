@@ -6,6 +6,7 @@ import importlib.util
 import json
 import platform
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,18 +14,53 @@ from typing import Any
 
 
 SENSITIVE_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("windows_user_path", r"C:\\Users\\"),
-    ("local_drive_path", r"\b[A-Z]:\\"),
+    ("windows_user_path", r"(?i)\b[A-Z]:[\\/]Users[\\/]"),
+    ("local_drive_path", r"(?i)\b[A-Z]:[\\/]"),
+    ("posix_user_path", r"(?<![\w.-])/(?:home|Users)/[^/\s]+(?:/|\b)"),
     ("auth_header_or_cookie", r"(?i)\b(authorization|set-cookie)\s*[:=]"),
-    ("cleartext_secret_assignment", r"(?i)\b(password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\s*[:=]\s*['\"][^'\"*][^'\"]{3,}['\"]"),
+    ("cleartext_secret_assignment", r"(?i)(?<![\w-])['\"]?(password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)['\"]?\s*[:=]\s*['\"][^'\"*][^'\"]{3,}['\"]"),
     ("python_cache_dir", r"__pycache__"),
     ("python_bytecode", r"\.py[co]$"),
     ("legacy_zotero_note_action", r"zotero_create_note|include_notes|evidence_note|--notes\b|--no-notes\b"),
 )
 
 PUBLIC_INSTITUTION_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("specific_institution_trace", "|".join(["\x54\x73\x69\x6e\x67\x68\x75\x61", "\u6e05\u534e", "webvpn\\." + "\x74\x73\x69\x6e\x67\x68\x75\x61", "tlink\\.lib\\." + "\x74\x73\x69\x6e\x67\x68\x75\x61"])), 
+    (
+        "specific_institution_trace",
+        "|".join(
+            [
+                "(?i:\\btsinghua\\b)",
+                "\u6e05\u534e",
+                "\u4e2d\u56fd\u6d77\u6d0b\u5927\u5b66",
+                "(?i:webvpn\\.tsinghua)",
+                "(?i:tlink\\.lib\\.tsinghua)",
+            ]
+        ),
+    ),
 )
+
+PUBLIC_BINARY_ALLOWLIST: frozenset[str] = frozenset()
+
+DANGEROUS_BINARY_SUFFIXES: dict[str, str] = {
+    ".png": "screenshot_or_image_included",
+    ".jpg": "screenshot_or_image_included",
+    ".jpeg": "screenshot_or_image_included",
+    ".gif": "screenshot_or_image_included",
+    ".webp": "screenshot_or_image_included",
+    ".bmp": "screenshot_or_image_included",
+    ".tif": "screenshot_or_image_included",
+    ".tiff": "screenshot_or_image_included",
+    ".har": "browser_session_asset_included",
+    ".pem": "certificate_or_private_key_included",
+    ".key": "certificate_or_private_key_included",
+    ".p12": "certificate_or_private_key_included",
+    ".pfx": "certificate_or_private_key_included",
+    ".crt": "certificate_or_private_key_included",
+    ".cer": "certificate_or_private_key_included",
+    ".der": "certificate_or_private_key_included",
+    ".jks": "certificate_or_private_key_included",
+    ".keystore": "certificate_or_private_key_included",
+}
 
 REQUIRED_RUNTIME_MODULES = (
     "typer",
@@ -55,6 +91,9 @@ class AuditIssue:
 
 
 def _iter_files(root: Path) -> list[Path]:
+    git_paths = _git_public_paths(root)
+    if git_paths is not None:
+        return [path for path in git_paths if path.is_file()]
     skipped_dirs = {".git", ".hg", ".svn"}
     files: list[Path] = []
     for path in root.rglob("*"):
@@ -68,6 +107,50 @@ def _iter_files(root: Path) -> list[Path]:
             continue
         files.append(path)
     return files
+
+
+def _iter_dirs(root: Path) -> list[Path]:
+    git_paths = _git_public_paths(root)
+    if git_paths is not None:
+        directories: set[Path] = set()
+        for path in git_paths:
+            parent = path.parent
+            while parent != root and root in parent.parents:
+                directories.add(parent)
+                parent = parent.parent
+        return sorted(directories)
+    skipped_dirs = {".git", ".hg", ".svn"}
+    directories: list[Path] = []
+    for path in root.rglob("*"):
+        if not path.is_dir():
+            continue
+        try:
+            parts = set(path.relative_to(root).parts)
+        except ValueError:
+            parts = set(path.parts)
+        if parts & skipped_dirs:
+            continue
+        directories.append(path)
+    return directories
+
+
+def _git_public_paths(root: Path) -> list[Path] | None:
+    """Return tracked and publishable untracked paths, excluding gitignored files."""
+    if not (root / ".git").exists():
+        return None
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return [
+        root / value.decode("utf-8", errors="surrogateescape")
+        for value in completed.stdout.split(b"\0")
+        if value
+    ]
 
 
 def _relative(root: Path, path: Path) -> str:
@@ -139,6 +222,15 @@ def audit_public_package(path: str | Path, *, include_institution_scan: bool = T
         rel = _relative(root, file_path)
         suffix = file_path.suffix.lower()
         name = file_path.name.lower()
+        if suffix in DANGEROUS_BINARY_SUFFIXES and rel not in PUBLIC_BINARY_ALLOWLIST:
+            issues.append(
+                AuditIssue(
+                    DANGEROUS_BINARY_SUFFIXES[suffix],
+                    rel,
+                    0,
+                    "Public package contains a dangerous binary or browser evidence asset.",
+                )
+            )
         if "__pycache__" in file_path.parts:
             issues.append(AuditIssue("python_cache_dir", rel, 0, "Package contains __pycache__."))
         if suffix in {".pyc", ".pyo"}:
@@ -151,7 +243,12 @@ def audit_public_package(path: str | Path, *, include_institution_scan: bool = T
             issues.append(AuditIssue("local_database_included", rel, 0, "Public package should omit local databases."))
         if suffix == ".log":
             issues.append(AuditIssue("local_log_included", rel, 0, "Public package should omit local logs."))
-        if name in {".env", "cookies.json"} or name.endswith(".env"):
+        if (
+            name in {".env", "cookies.json", "storage_state.json", "local state"}
+            or name.endswith(".env")
+            or name.startswith("cookies.")
+            or name.startswith("storage_state.")
+        ):
             issues.append(AuditIssue("local_secret_or_session_file", rel, 0, "Public package should omit env, cookie, and session files."))
 
     forbidden_dirs = {
@@ -165,6 +262,8 @@ def audit_public_package(path: str | Path, *, include_institution_scan: bool = T
         "instsci/_browsers": "browser_runtime_included",
         "carsi_cookies": "cookie_store_included",
         "chrome-profile": "browser_profile_included",
+        "browser-profile": "browser_profile_included",
+        "cnki-profile": "browser_profile_included",
         "worker-profiles": "browser_profile_included",
         ".cache": "local_cache_included",
         "private-evidence": "private_evidence_included",
@@ -174,6 +273,28 @@ def audit_public_package(path: str | Path, *, include_institution_scan: bool = T
     for rel_dir, code in forbidden_dirs.items():
         if (root / rel_dir).exists():
             issues.append(AuditIssue(code, rel_dir, 0, "Public package should omit local runtime artifacts."))
+
+    forbidden_dir_names = {
+        "runs": "run_outputs_included",
+        "downloads": "download_outputs_included",
+        "carsi_cookies": "cookie_store_included",
+        "chrome-profile": "browser_profile_included",
+        "browser-profile": "browser_profile_included",
+        "cnki-profile": "browser_profile_included",
+        "worker-profiles": "browser_profile_included",
+        ".cache": "local_cache_included",
+        "private-evidence": "private_evidence_included",
+        "private_evidence": "private_evidence_included",
+    }
+    already_reported = {(issue.code, issue.path) for issue in issues}
+    for directory in _iter_dirs(root):
+        code = forbidden_dir_names.get(directory.name.lower())
+        if not code:
+            continue
+        rel = _relative(root, directory)
+        if (code, rel) not in already_reported:
+            issues.append(AuditIssue(code, rel, 0, "Public package should omit local runtime artifacts."))
+            already_reported.add((code, rel))
 
     patterns = SENSITIVE_PATTERNS + (PUBLIC_INSTITUTION_PATTERNS if include_institution_scan else ())
     for file_path in files:

@@ -9,7 +9,7 @@ if ([string]::IsNullOrWhiteSpace($Python)) {
   if (-not $cmd) {
     throw "instsci command is not on PATH. Pass -Python <path-to-installs-python>."
   }
-  $launcher = Get-Content -LiteralPath $cmd.Path -Raw -Encoding Byte -ErrorAction SilentlyContinue
+  $launcher = [System.IO.File]::ReadAllBytes($cmd.Path)
   $strings = [System.Text.Encoding]::ASCII.GetString($launcher)
   if ($strings -match '#!([^\r\n]+python\.exe)') {
     $Python = $Matches[1]
@@ -23,7 +23,6 @@ if ([string]::IsNullOrWhiteSpace($Python) -or -not (Test-Path -LiteralPath $Pyth
 $script = @'
 import importlib.util
 import pathlib
-import subprocess
 import sys
 
 mods = ["instsci.cli", "instsci.browser_doctor", "instsci.publisher_matrix", "instsci.publisher_batch"]
@@ -33,21 +32,15 @@ for name in mods:
     if not spec or not spec.origin:
         raise SystemExit(f"missing module: {name}")
     paths.append(spec.origin)
-for test_name in [
-    "instsci.tests.test_status_contract",
-    "instsci.tests.test_contract_fixtures",
-]:
-    test_spec = importlib.util.find_spec(test_name)
-    if not test_spec or not test_spec.origin:
-        raise SystemExit(f"missing runtime test module: {test_name}")
-    paths.append(test_spec.origin)
+for path in paths:
+    source = pathlib.Path(path).read_text(encoding="utf-8")
+    compile(source, path, "exec")
 
-compile_result = subprocess.run([sys.executable, "-m", "py_compile", *paths], text=True)
-if compile_result.returncode:
-    raise SystemExit(compile_result.returncode)
-test_result = subprocess.run([sys.executable, "-m", "unittest", "instsci.tests.test_status_contract", "instsci.tests.test_contract_fixtures", "-v"], text=True)
-if test_result.returncode:
-    raise SystemExit(test_result.returncode)
+from instsci.publisher_matrix import build_publisher_matrix_report
+
+unknown = build_publisher_matrix_report("runtime-contract-unknown")
+if unknown["items"][0]["batch_recommendation"] == "batch_ok":
+    raise SystemExit("unknown publisher failed open")
 
 print("runtime contract OK")
 for path in paths:

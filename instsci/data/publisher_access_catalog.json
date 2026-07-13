@@ -269,12 +269,12 @@
           "attempt_cache"
         ],
         "preferred": "persistent_browser_profile",
-        "notes": "APS article/PDF routes were discovered, but this publisher is marked unsupported for the reusable institutional-login workflow. The article page exposes /login_inst_user for institution-provided username/password, while OpenAthens/WebVPN/CARSI-style routes tested with Example University did not authorize the sample PDF. Do not click the PRL navigation item named Accepted; use only the article PDF route for open-access APS content."
+        "notes": "APS article/PDF routes are documented for route planning, but a reusable closed-access route is not published in this public preview. Use fresh visible-browser evidence for any current DOI verdict."
       },
       "link_characteristics": [
         "link.aps.org/doi/{doi} -> link.aps.org/pdf/{doi}",
         "journals.aps.org/.../abstract/{doi} -> .../pdf/{doi}",
-        "journals.aps.org/login_inst_user is institution-provided username/password and is marked unsupported for the reusable institutional SSO workflow"
+        "a reusable closed-access institutional route is not published in the public preview"
       ],
       "verification": {
         "sample_doi": "10.1103/PhysRevLett.128.161102",

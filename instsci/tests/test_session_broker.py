@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from instsci import job_store
@@ -140,7 +141,7 @@ class SessionBrokerTests(unittest.TestCase):
         self.assertEqual(submit.call_args.kwargs["institution"], "New Example University")
         self.assertIn("New Example University", submit.call_args.kwargs["institution_aliases"])
 
-    def test_papers_prompts_for_subscription_institution_without_default_tsinghua(self):
+    def test_papers_prompts_for_subscription_institution_without_default_example(self):
         runner = CliRunner()
         with TemporaryDirectory() as tmp:
             doi_file = Path(tmp) / "dois.txt"
@@ -199,12 +200,13 @@ class SessionBrokerTests(unittest.TestCase):
         self.assertEqual(submit.call_args.kwargs["institution"], "Chosen University")
         self.assertEqual(config.carsi_idp_name, "Chosen University")
 
-    def test_papers_institution_help_does_not_default_to_tsinghua(self):
+    def test_papers_institution_help_does_not_default_to_example(self):
         result = CliRunner().invoke(app, ["papers", "--help"])
+        output = unstyle(result.output)
 
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("--institution", result.output)
-        self.assertNotIn("Example University", result.output)
+        self.assertIn("--institution", output)
+        self.assertNotIn("Example University", output)
 
     def test_session_broker_state_command_reports_running_broker(self):
         runner = CliRunner()

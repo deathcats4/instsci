@@ -90,7 +90,8 @@ InstSci keeps a local capability matrix for site-level experience:
 - `prewarm_required`: single DOI prewarm is recommended
 - `waf_risky`: avoid batch by default
 - `access_side_check_needed`: verify access in a regular browser first
-- `unsupported`: route is not maintained yet
+- `route_not_published`: a reusable route is not part of the public preview
+- `unclassified`: no public planning classification exists; do not assume batch readiness
 
 The matrix stores only reusable site-level notes. It must not store credentials, cookies, personal emails, private institution details, or private DOI lists.
 

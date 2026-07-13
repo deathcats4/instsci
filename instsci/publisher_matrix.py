@@ -14,7 +14,8 @@ MATRIX_STATUSES = {
     "prewarm_required",
     "waf_risky",
     "access_side_check_needed",
-    "unsupported",
+    "route_not_published",
+    "unclassified",
 }
 
 TERMINAL_BLOCKER_STATES = {
@@ -45,7 +46,8 @@ MATRIX_STATUS_SUGGESTED_PATHS = {
     "prewarm_required": ["single_doi_prewarm", "rerun_same_browser_profile"],
     "waf_risky": ["manual_browser_single_doi", "stop_batch", "retry_later"],
     "access_side_check_needed": ["regular_browser_access_check", "library_resolver", "single_doi_prewarm"],
-    "unsupported": ["add_publisher_profile", "oa_retry", "library_resolver"],
+    "route_not_published": ["add_publisher_profile", "oa_retry", "library_resolver"],
+    "unclassified": ["manual_browser_single_doi", "add_publisher_profile"],
 }
 
 
@@ -60,15 +62,34 @@ class PublisherMatrixEntry:
 
     @property
     def should_skip_batch(self) -> bool:
-        return self.batch_policy in {"skip", "single_only"} or self.status in {"waf_risky", "unsupported"}
+        return self.batch_policy in {"skip", "single_only"} or self.status in {
+            "waf_risky",
+            "route_not_published",
+            "unclassified",
+        }
 
 
 def _matrix_path() -> Path:
-    return Path(__file__).resolve().parent / "data" / "publisher_capability_matrix.json"
+    return Path(__file__).resolve().parent / "data" / "publisher_public_capability_summary.json"
 
 
 def normalize_publisher_key(value: str) -> str:
     return (value or "").strip().lower().replace(" ", "-")
+
+
+def canonical_publisher_key(value: str) -> str:
+    """Resolve known aliases to the canonical publisher-profile key."""
+    normalized = normalize_publisher_key(value)
+    try:
+        from .publisher_profiles import get_publisher_profile, list_publisher_profiles
+
+        profile = get_publisher_profile(normalized)
+        for key in list_publisher_profiles():
+            if get_publisher_profile(key) is profile:
+                return key
+    except ValueError:
+        pass
+    return normalized
 
 
 def load_publisher_matrix(path: str | Path | None = None) -> dict[str, PublisherMatrixEntry]:
@@ -84,13 +105,15 @@ def load_publisher_matrix(path: str | Path | None = None) -> dict[str, Publisher
         if not isinstance(item, dict):
             continue
         normalized_key = normalize_publisher_key(key)
-        status = str(item.get("status") or "ready")
+        status = str(item.get("status") or "unclassified")
+        batch_policy = str(item.get("batch_policy") or "allow")
         if status not in MATRIX_STATUSES:
-            status = "ready"
+            status = "unclassified"
+            batch_policy = "single_only"
         entries[normalized_key] = PublisherMatrixEntry(
             key=normalized_key,
             status=status,
-            batch_policy=str(item.get("batch_policy") or "allow"),
+            batch_policy=batch_policy,
             prewarm=bool(item.get("prewarm")),
             known_blocker=str(item.get("known_blocker") or ""),
             note=str(item.get("note") or ""),
@@ -99,16 +122,26 @@ def load_publisher_matrix(path: str | Path | None = None) -> dict[str, Publisher
 
 
 def get_publisher_matrix_entry(publisher: str) -> PublisherMatrixEntry:
-    key = normalize_publisher_key(publisher)
+    key = canonical_publisher_key(publisher)
     matrix = load_publisher_matrix()
-    return matrix.get(key, PublisherMatrixEntry(key=key, status="ready"))
+    return matrix.get(key, _unclassified_entry(key))
+
+
+def _unclassified_entry(key: str) -> PublisherMatrixEntry:
+    return PublisherMatrixEntry(
+        key=key,
+        status="unclassified",
+        batch_policy="single_only",
+        prewarm=True,
+        note="Publisher route is not classified in the public capability summary.",
+    )
 
 
 def matrix_skip_reason(entry: PublisherMatrixEntry, *, count: int, force: bool = False) -> str:
     if force:
         return ""
-    if entry.status == "unsupported":
-        return entry.note or "Publisher is marked unsupported in the local capability matrix."
+    if entry.status == "route_not_published":
+        return entry.note or "Publisher route is not published in the public capability summary."
     if entry.status == "waf_risky" and count > 1:
         return entry.note or "Publisher is WAF-risky; run a single DOI prewarm or use --force."
     if entry.batch_policy == "single_only" and count > 1:
@@ -120,7 +153,7 @@ def matrix_skip_reason(entry: PublisherMatrixEntry, *, count: int, force: bool =
 
 def matrix_batch_recommendation(entry: PublisherMatrixEntry) -> str:
     """Return a compact batch recommendation for a publisher matrix entry."""
-    if entry.status == "unsupported" or entry.batch_policy == "skip":
+    if entry.status == "route_not_published" or entry.batch_policy == "skip":
         return "skip"
     if entry.status == "waf_risky" or entry.batch_policy == "single_only":
         return "single_doi_only"
@@ -178,10 +211,10 @@ def build_publisher_matrix_report(
 ) -> dict[str, Any]:
     """Build the public publisher-doctor matrix report."""
     matrix = entries if entries is not None else load_publisher_matrix()
-    wanted = normalize_publisher_key(publisher)
+    wanted = canonical_publisher_key(publisher)
     if wanted and wanted != "all":
         configured = wanted in matrix
-        selected = [matrix.get(wanted, PublisherMatrixEntry(key=wanted, status="ready"))]
+        selected = [matrix.get(wanted, _unclassified_entry(wanted))]
         publisher_value = wanted
     else:
         configured = True
@@ -208,7 +241,8 @@ def build_publisher_matrix_report(
             "ready": status_counts.get("ready", 0),
             "prewarm_required": status_counts.get("prewarm_required", 0),
             "waf_risky": status_counts.get("waf_risky", 0),
-            "unsupported": status_counts.get("unsupported", 0),
+            "route_not_published": status_counts.get("route_not_published", 0),
+            "unclassified": status_counts.get("unclassified", 0),
             "batch_ok": recommendation_counts.get("batch_ok", 0),
             "batch_guarded": len(items) - recommendation_counts.get("batch_ok", 0),
         },

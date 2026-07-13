@@ -35,6 +35,14 @@ class AuthCookieStoreTests(unittest.TestCase):
 
             self.assertIn("--no-proxy-server", auth._browser_launch_args())
 
+    def test_webvpn_session_validation_handles_missing_key(self):
+        with TemporaryDirectory() as tmp:
+            cfg = temp_config(Path(tmp))
+            cfg.webvpn_base_url = "https://webvpn.example.edu"
+            auth = WebVPNAuth(cfg)
+
+            self.assertFalse(auth._validate_session())
+
     def test_carsi_save_preserves_browser_session_cookie(self):
         with TemporaryDirectory() as tmp:
             cfg = temp_config(Path(tmp))
@@ -79,5 +87,4 @@ class AuthCookieStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 
