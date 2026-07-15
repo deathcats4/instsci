@@ -1972,6 +1972,8 @@ def wanfang_batch(
         open_wanfang_session,
         safe_wanfang_url,
         WANFANG_HOST_SUFFIXES,
+        wanfang_downloaded_pdf_path,
+        wanfang_next_action_for_result,
         wanfang_verification_visible,
     )
     from .chinese_literature import chinese_literature_session_domains
@@ -2136,8 +2138,8 @@ def wanfang_batch(
                         )
                 row.update(result)
                 row["after_screenshots"] = screenshot_pages(item_evidence, "after_download")
-                pdf_path = Path(str(result.get("pdf_path") or ""))
-                text = pdf_extractor.extract_text(pdf_path) if pdf_path.exists() else ""
+                pdf_path = wanfang_downloaded_pdf_path(result)
+                text = pdf_extractor.extract_text(pdf_path) if pdf_path else ""
                 title_match = bool(result.get("filename_title_match")) or ("".join(title.split()) in "".join(text.split()))
                 valid_pdf = bool(result.get("pdf_header_valid")) and int(result.get("size_bytes") or 0) > 10_000
                 success = valid_pdf and (title_match or not strict_title_match)
@@ -2158,15 +2160,7 @@ def wanfang_batch(
                         "file_status": "success" if success else ("unverified" if valid_pdf else "missing"),
                         "standard_status": standard_status,
                         "evidence": (row.get("after_screenshots") or row.get("before_screenshots") or [""])[0],
-                        "next_action": (
-                            "none"
-                            if standard_status == "success"
-                            else (
-                                "complete_visible_human_verification_then_rerun_same_output"
-                                if standard_status == "human_verification_required"
-                                else "inspect_downloaded_pdf"
-                            )
-                        ),
+                        "next_action": wanfang_next_action_for_result(standard_status, result),
                     }
                 )
             except Exception as exc:

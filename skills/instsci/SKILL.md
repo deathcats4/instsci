@@ -57,12 +57,23 @@ instsci chinese-literature-sites
 
 - Production default: treat CNKI and Wanfang as the download-verified Chinese
   literature portals. `download_verified_portals` should be `["cnki", "wanfang"]`.
+- For Chinese literature batches, use CNKI as the first route and Wanfang as a
+  fallback/supplement route. Do not run every record through every portal by
+  default: if CNKI downloads and verifies a record, stop there; use Wanfang for
+  CNKI misses, capture failures, unavailable access, or explicit Wanfang checks.
+- For every Chinese literature portal, require exact-title evidence before
+  treating a search hit as the target article. Search pages can contain many
+  similar Chinese titles; never download or report success from a related title
+  merely because keywords overlap. After capture, still require filename or PDF
+  text/title verification before `file_status=success`.
 - CNKI is the primary Chinese full-text route: use the persistent CNKI profile
   and the search-first batch path (`instsci cnki-batch ... --navigation-mode search`).
   In search mode, records need `record_id` and `title`; `url` is optional and
   used only as a fallback. Direct mode still requires a validated CNKI URL.
   Prefer homepage/search-result navigation before saved detail URLs because
   direct article/download URLs are more likely to trigger click-word verification.
+  When CNKI search opens a detail page, confirm the visible detail-page title or
+  captured PDF text matches the requested title before marking success.
   Single-record `cnki-fetch` needs `--title` or a text-visible record id before
   a captured PDF can be marked `file_status=success`; otherwise keep it
   `unverified/pdf_candidate_conflict`.
@@ -72,6 +83,14 @@ instsci chinese-literature-sites
   browser context because the popup URL is generated per session. Wanfang uses
   its own persistent profile by default. For batches, use
   `instsci wanfang-batch records.json --output .\runs\wanfang`.
+  Wanfang requires a stricter list-page guard because downloads are triggered
+  directly from search-result rows: click a `下载` control only when the same
+  result row contains the exact requested title. A page-level title match,
+  nearby title text, or similar keyword result is not enough. If no exact row is
+  visible, do not download a similar candidate; mark the record `missing` or
+  `capture_failed` with `next_action=inspect_wanfang_search_results_or_refine_query`.
+  A valid PDF whose title/text cannot be tied to the requested record remains
+  `unverified/pdf_candidate_conflict`, never `success`.
 - CQVIP is a manual broker only, not download-verified. The visible route can
   reach a `www.cqvip.com` article page and `PDF下载`; manual `IP登录` can redirect
   to `qikan.cqvip.com`, but qikan rendered blank in CloakBrowser and HTTP
@@ -93,6 +112,10 @@ instsci chinese-literature-sites
 - For Chinese records without DOI, Zotero handoff should use
   `attachment_only` when `zotero_item_key` and a verified PDF are present;
   do not skip them as `missing_doi`.
+- When building Chinese literature batches from Zotero, preserve
+  `zotero_item_key` in each record and manifest row. Use title first, then year,
+  author, and publication metadata when available to judge exactness. Do not
+  assume a Chinese Zotero title is present in both CNKI and Wanfang.
 
 ## Elsevier API Setup
 

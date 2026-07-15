@@ -4,9 +4,12 @@ from unittest import TestCase
 from urllib.parse import parse_qs, urlparse
 
 from instsci.wanfang_session import (
+    choose_wanfang_download_candidate,
     classify_wanfang_page,
     load_wanfang_batch,
     safe_wanfang_url,
+    wanfang_downloaded_pdf_path,
+    wanfang_next_action_for_result,
     wanfang_search_url,
 )
 
@@ -44,6 +47,63 @@ class WanfangSessionTests(TestCase):
             classify_wanfang_page("https://s.wanfangdata.com.cn/paper?q=测试", "万方数据"),
             "portal_ready",
         )
+
+    def test_choose_wanfang_download_candidate_requires_exact_result_row(self) -> None:
+        candidates = [
+            {
+                "index": 1,
+                "text": "下载",
+                "cls": "wf-list-button",
+                "row_title_match": False,
+                "page_title_match": True,
+                "title_y_distance": 40,
+            },
+            {
+                "index": 2,
+                "text": "下载",
+                "cls": "wf-list-button",
+                "row_title_match": True,
+                "page_title_match": True,
+                "title_y_distance": 300,
+            },
+        ]
+
+        chosen = choose_wanfang_download_candidate(candidates, title="纳米矿物在地球科学的研究进展")
+
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["index"], 2)
+
+    def test_choose_wanfang_download_candidate_rejects_page_level_only_match(self) -> None:
+        candidates = [
+            {
+                "index": 1,
+                "text": "下载",
+                "cls": "wf-list-button",
+                "row_title_match": False,
+                "page_title_match": True,
+                "title_y_distance": 40,
+            }
+        ]
+
+        self.assertIsNone(
+            choose_wanfang_download_candidate(candidates, title="深水页岩黄铁矿特征、形成及意义")
+        )
+
+    def test_wanfang_next_action_points_to_search_results_when_no_exact_title(self) -> None:
+        self.assertEqual(
+            wanfang_next_action_for_result("capture_failed", {"reason": "no_exact_title_result"}),
+            "inspect_wanfang_search_results_or_refine_query",
+        )
+        self.assertEqual(
+            wanfang_next_action_for_result("capture_failed", {"download_click": {"reason": "no_exact_title_result"}}),
+            "inspect_wanfang_search_results_or_refine_query",
+        )
+
+    def test_wanfang_downloaded_pdf_path_ignores_empty_or_directory_paths(self) -> None:
+        self.assertIsNone(wanfang_downloaded_pdf_path({}))
+        self.assertIsNone(wanfang_downloaded_pdf_path({"pdf_path": ""}))
+        self.assertIsNone(wanfang_downloaded_pdf_path({"pdf_path": "."}))
+
     def test_load_wanfang_batch_validates_records(self) -> None:
         with TemporaryDirectory() as tmp:
             source = Path(tmp) / "batch.json"
