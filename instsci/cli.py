@@ -1414,6 +1414,60 @@ def login(
         raise typer.Exit(1)
 
 
+@app.command("chinese-literature-sites")
+def chinese_literature_sites(
+    site: str = typer.Option("", "--site", "-s", help="Filter by Chinese literature portal key or alias."),
+    json_report: bool = typer.Option(False, "--json", help="Print JSON instead of a compact table."),
+):
+    """Show Chinese literature portal routing support and browser-readiness."""
+    from .chinese_literature import (
+        chinese_literature_portal_report,
+        get_chinese_literature_portal,
+    )
+
+    report = chinese_literature_portal_report()
+    if site:
+        try:
+            portal = get_chinese_literature_portal(site)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(2)
+        report["portals"] = [portal.to_json()]
+        report["summary"] = {
+            "portals": 1,
+            "capability_counts": {portal.capability: 1},
+            "verified_portals": [portal.key] if portal.result_evidence == "browser_verified" else [],
+        }
+
+    if json_report:
+        console.print_json(json.dumps(report, ensure_ascii=False))
+        return
+
+    summary = report["summary"]
+    console.print("[bold]Chinese literature portal support[/bold]")
+    console.print(
+        f"Portals: {summary['portals']} | "
+        f"download-verified: {', '.join(summary['download_verified_portals']) or 'none'} | "
+        f"route-verified: {', '.join(summary['route_verified_portals']) or 'none'}"
+    )
+    table = Table(title="Chinese Literature Sites")
+    table.add_column("Site", overflow="fold")
+    table.add_column("Capability", overflow="fold")
+    table.add_column("Evidence", overflow="fold")
+    table.add_column("Navigation", overflow="fold")
+    table.add_column("Next Action", overflow="fold")
+    for portal in report["portals"]:
+        table.add_row(
+            str(portal["key"]),
+            str(portal["capability"]),
+            str(portal["result_evidence"]),
+            str(portal["default_navigation_mode"]),
+            str(portal["next_action"]),
+        )
+    console.print(table)
+    console.print("[dim]Only download-verified portals should be used for unattended batch PDF capture.[/dim]")
+
+
 @app.command("cnki-login")
 def cnki_login(
     url: str = typer.Option("https://www.cnki.net/", "--url", "-u", help="CNKI page to open in the persistent visible browser."),
@@ -1464,8 +1518,10 @@ def cnki_fetch(
         capture_cnki_pdf,
         classify_cnki_session,
         cnki_verification_visible,
+        navigate_cnki_article,
         open_cnki_login_session,
         safe_page_url,
+        settle_cnki_after_manual_step,
     )
 
     _setup_logging(verbose)
@@ -1484,17 +1540,24 @@ def cnki_fetch(
         "next_action": "inspect_visible_cnki_page",
     }
     try:
-        context, page, run_dir = open_cnki_login_session(cfg, url=url, output_dir=run_dir)
+        context, page, run_dir = open_cnki_login_session(cfg, url="https://www.cnki.net/", output_dir=run_dir)
+        navigation = navigate_cnki_article(page, url)
+        report["navigation"] = navigation
         if cnki_verification_visible(page):
             console.print("[yellow]Complete the visible CNKI verification; InstSci will handle the PDF click.[/yellow]")
             typer.prompt("Press Enter here after verification", default="", show_default=False)
+            settle = settle_cnki_after_manual_step(page, resume_url=url)
+            report["manual_verification_settle"] = settle
         before = run_dir / "before_pdf_click.png"
         page.screenshot(path=str(before), full_page=False)
         result = capture_cnki_pdf(page, output_path=run_dir / "pdfs" / f"{record_id}.pdf")
         if result.get("verification_required"):
             console.print("[yellow]CNKI requested another verification before download. Complete it in the browser.[/yellow]")
             typer.prompt("Press Enter here after verification", default="", show_default=False)
-            result = capture_cnki_pdf(page, output_path=run_dir / "pdfs" / f"{record_id}.pdf")
+            settle = settle_cnki_after_manual_step(page, resume_url=url)
+            report["download_verification_settle"] = settle
+            if not settle.get("verification_required"):
+                result = capture_cnki_pdf(page, output_path=run_dir / "pdfs" / f"{record_id}.pdf")
         after = run_dir / "after_pdf_click.png"
         page.screenshot(path=str(after), full_page=False)
         valid = bool(result.get("pdf_header_valid")) and int(result.get("size_bytes") or 0) > 10_000
@@ -1535,15 +1598,22 @@ def cnki_batch(
     output: str = typer.Option("", "--output", "-o", help="Private run directory for PDFs, screenshots, and manifests."),
     delay: float = typer.Option(30.0, "--delay", min=2.0, help="Seconds between article downloads."),
     verification_policy: str = typer.Option("stop", "--verification-policy", help="Human-verification policy: stop or prompt."),
+    navigation_mode: str = typer.Option("search", "--navigation-mode", help="CNKI article navigation mode: search or direct."),
+    skip_completed: bool = typer.Option(True, "--skip-completed/--no-skip-completed", help="When --output has a prior manifest, keep successful rows and skip them."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ):
     """Download a small CNKI batch in one persistent visible browser session."""
     from .cnki_session import (
         capture_cnki_pdf,
+        cnki_pdf_button_visible,
         classify_cnki_session,
+        cnki_verification_visible,
         load_cnki_batch,
+        navigate_cnki_article,
+        navigate_cnki_article_via_search,
         open_cnki_login_session,
         safe_page_url,
+        settle_cnki_after_manual_step,
     )
     from .extractors import pdf_extractor
 
@@ -1560,6 +1630,10 @@ def cnki_batch(
     if verification_policy not in {"stop", "prompt"}:
         console.print("[red]--verification-policy must be 'stop' or 'prompt'.[/red]")
         raise typer.Exit(2)
+    navigation_mode = navigation_mode.strip().lower()
+    if navigation_mode not in {"search", "direct"}:
+        console.print("[red]--navigation-mode must be 'search' or 'direct'.[/red]")
+        raise typer.Exit(2)
 
     cfg = Config.load()
     cfg.ensure_dirs()
@@ -1571,6 +1645,27 @@ def cnki_batch(
     manifest_path = run_dir / "manifest.json"
     rows: list[dict[str, object]] = []
     context = None
+    completed_ids: set[str] = set()
+    if skip_completed and manifest_path.exists():
+        try:
+            previous_rows = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(previous_rows, list):
+                previous_success: dict[str, dict[str, object]] = {}
+                for previous in previous_rows:
+                    if not isinstance(previous, dict):
+                        continue
+                    previous_id = str(previous.get("record_id") or "")
+                    if previous_id and previous.get("file_status") == "success":
+                        previous_success[previous_id] = previous
+                for record in records:
+                    previous = previous_success.get(record["record_id"])
+                    if previous:
+                        rows.append(previous)
+                        completed_ids.add(record["record_id"])
+                if completed_ids:
+                    console.print(f"[green]Skipping {len(completed_ids)} previously verified CNKI PDFs from {manifest_path}.[/green]")
+        except (OSError, json.JSONDecodeError) as exc:
+            console.print(f"[yellow]Could not load prior CNKI manifest for resume: {exc}[/yellow]")
 
     def write_checkpoint() -> None:
         manifest_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1589,6 +1684,8 @@ def cnki_batch(
         context, page, _ = open_cnki_login_session(cfg, url="https://www.cnki.net/", output_dir=run_dir)
         for index, record in enumerate(records, 1):
             record_id = record["record_id"]
+            if record_id in completed_ids:
+                continue
             title = record["title"]
             item_evidence = evidence_dir / record_id
             item_evidence.mkdir(parents=True, exist_ok=True)
@@ -1597,7 +1694,11 @@ def cnki_batch(
                 "record_id": record_id,
                 "title": title,
                 "zotero_item_key": record["zotero_item_key"],
-                "route_attempted": "persistent_cloakbrowser_pdf_button",
+                "route_attempted": (
+                    "persistent_cloakbrowser_search_pdf_button"
+                    if navigation_mode == "search"
+                    else "persistent_cloakbrowser_pdf_button"
+                ),
                 "institution": _configured_subscription_institution(cfg),
                 "file_status": "missing",
                 "standard_status": "capture_failed",
@@ -1606,19 +1707,56 @@ def cnki_batch(
             }
             console.print(f"[bold][{index}/{len(records)}][/bold] {title}")
             try:
-                page.goto(record["url"], wait_until="domcontentloaded", timeout=60_000)
-                time.sleep(3)
-                if classify_cnki_session(str(getattr(page, "url", "") or ""), page.title()) == "human_verification_required":
+                if navigation_mode == "search":
+                    navigation = navigate_cnki_article_via_search(
+                        page,
+                        title=title,
+                        fallback_url=record["url"],
+                        record_id=record_id,
+                    )
+                else:
+                    navigation = navigate_cnki_article(page, record["url"])
+                row["navigation"] = navigation
+                if (
+                    navigation.get("session_status") == "human_verification_required"
+                    or navigation.get("verification_required")
+                    or classify_cnki_session(str(getattr(page, "url", "") or ""), "") == "human_verification_required"
+                ):
                     if verification_policy == "stop":
                         row.update(
                             {
                                 "standard_status": "human_verification_required",
-                                "next_action": "resume_with_verification_policy_prompt",
+                                "next_action": "resume_same_output_with_verification_policy_prompt",
                             }
                         )
                     else:
                         console.print("[yellow]Complete the visible CNKI verification; InstSci will continue the batch.[/yellow]")
                         typer.prompt("Press Enter here after verification", default="", show_default=False)
+                        settle = settle_cnki_after_manual_step(
+                            page,
+                            resume_url=record["url"] if navigation_mode == "direct" else "",
+                        )
+                        row["manual_verification_settle"] = settle
+                        if (
+                            navigation_mode == "search"
+                            and not settle.get("verification_required")
+                            and not cnki_verification_visible(page)
+                            and not cnki_pdf_button_visible(page)
+                        ):
+                            renavigation = navigate_cnki_article_via_search(
+                                page,
+                                title=title,
+                                fallback_url=record["url"],
+                                record_id=record_id,
+                            )
+                            row["post_verification_navigation"] = renavigation
+                        if settle.get("verification_required"):
+                            row.update(
+                                {
+                                    "standard_status": "human_verification_required",
+                                    "next_action": "complete_visible_human_verification_then_rerun_same_output",
+                                }
+                            )
                 if row["standard_status"] == "human_verification_required":
                     failure = item_evidence / "human_verification_required.png"
                     page.screenshot(path=str(failure), full_page=False)
@@ -1633,13 +1771,41 @@ def cnki_batch(
                     if verification_policy == "prompt":
                         console.print("[yellow]CNKI requested verification before this download. Complete it in the browser.[/yellow]")
                         typer.prompt("Press Enter here after verification", default="", show_default=False)
-                        result = capture_cnki_pdf(page, output_path=pdf_dir / f"{record_id}.pdf", timeout_ms=45_000)
+                        settle = settle_cnki_after_manual_step(
+                            page,
+                            resume_url=record["url"] if navigation_mode == "direct" else "",
+                        )
+                        row["download_verification_settle"] = settle
+                        if (
+                            navigation_mode == "search"
+                            and not settle.get("verification_required")
+                            and not cnki_verification_visible(page)
+                            and not cnki_pdf_button_visible(page)
+                        ):
+                            renavigation = navigate_cnki_article_via_search(
+                                page,
+                                title=title,
+                                fallback_url=record["url"],
+                                record_id=record_id,
+                            )
+                            row["download_post_verification_navigation"] = renavigation
+                        if not settle.get("verification_required"):
+                            result = capture_cnki_pdf(page, output_path=pdf_dir / f"{record_id}.pdf", timeout_ms=45_000)
                 after = item_evidence / "after_pdf_click.png"
                 page.screenshot(path=str(after), full_page=False)
                 pdf_path = Path(str(result.get("pdf_path") or ""))
                 text = pdf_extractor.extract_text(pdf_path) if pdf_path.exists() else ""
                 title_match = "".join(title.split()) in "".join(text.split())
                 valid_pdf = bool(result.get("pdf_header_valid")) and int(result.get("size_bytes") or 0) > 10_000
+                standard_status = (
+                    "success"
+                    if valid_pdf and title_match
+                    else (
+                        "pdf_candidate_conflict"
+                        if valid_pdf
+                        else ("human_verification_required" if result.get("verification_required") else "capture_failed")
+                    )
+                )
                 row.update(result)
                 row.update(
                     {
@@ -1647,9 +1813,17 @@ def cnki_batch(
                         "title_match": title_match,
                         "text_length": len(text),
                         "file_status": "success" if valid_pdf and title_match else ("unverified" if valid_pdf else "missing"),
-                        "standard_status": "success" if valid_pdf and title_match else ("pdf_candidate_conflict" if valid_pdf else ("human_verification_required" if result.get("verification_required") else "capture_failed")),
+                        "standard_status": standard_status,
                         "evidence": str(after),
-                        "next_action": "none" if valid_pdf and title_match else "inspect_downloaded_pdf",
+                        "next_action": (
+                            "none"
+                            if standard_status == "success"
+                            else (
+                                "complete_visible_human_verification_then_rerun_same_output"
+                                if standard_status == "human_verification_required"
+                                else "inspect_downloaded_pdf"
+                            )
+                        ),
                     }
                 )
             except Exception as exc:
@@ -1677,6 +1851,225 @@ def cnki_batch(
     console.print(f"[bold]CNKI batch complete:[/bold] {success}/{len(records)} verified PDFs")
     console.print(f"[dim]Manifest: {manifest_path}[/dim]")
     if success != len(records):
+        raise typer.Exit(2)
+
+
+@app.command("wanfang-batch")
+def wanfang_batch(
+    file: Path = typer.Argument(help="JSON array of Wanfang records: record_id, title, optional query/url/zotero_item_key."),
+    output: str = typer.Option("", "--output", "-o", help="Private run directory for PDFs, screenshots, and manifests."),
+    delay: float = typer.Option(10.0, "--delay", min=2.0, help="Seconds between article downloads."),
+    verification_policy: str = typer.Option("stop", "--verification-policy", help="Human-verification policy: stop or prompt."),
+    profile_dir: str = typer.Option("", "--profile-dir", help="Persistent visible browser profile. Defaults to config chrome_profile_dir."),
+    skip_completed: bool = typer.Option(True, "--skip-completed/--no-skip-completed", help="When --output has a prior manifest, keep successful rows and skip them."),
+    strict_title_match: bool = typer.Option(True, "--strict-title-match/--no-strict-title-match", help="Require filename or extracted text to match the requested title."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
+):
+    """Download a small Wanfang batch through search-result download popups."""
+    from .extractors import pdf_extractor
+    from .wanfang_session import (
+        capture_wanfang_pdf,
+        load_wanfang_batch,
+        navigate_wanfang_search,
+        open_wanfang_session,
+        safe_wanfang_url,
+        wanfang_verification_visible,
+    )
+
+    _setup_logging(verbose)
+    try:
+        records = load_wanfang_batch(file)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Invalid Wanfang batch input: {exc}[/red]")
+        raise typer.Exit(2)
+    if not records:
+        console.print("[yellow]Wanfang batch is empty.[/yellow]")
+        return
+    verification_policy = verification_policy.strip().lower()
+    if verification_policy not in {"stop", "prompt"}:
+        console.print("[red]--verification-policy must be 'stop' or 'prompt'.[/red]")
+        raise typer.Exit(2)
+
+    cfg = Config.load()
+    cfg.ensure_dirs()
+    run_dir = Path(output) if output else Path(cfg.output_dir).parent / "runs" / f"{datetime.now():%Y%m%d_%H%M%S}_wanfang_batch"
+    pdf_dir = run_dir / "pdfs"
+    evidence_dir = run_dir / "evidence"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = run_dir / "manifest.json"
+    rows: list[dict[str, object]] = []
+    completed_ids: set[str] = set()
+    context = None
+
+    if skip_completed and manifest_path.exists():
+        try:
+            previous_rows = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(previous_rows, list):
+                previous_success: dict[str, dict[str, object]] = {}
+                for previous in previous_rows:
+                    if not isinstance(previous, dict):
+                        continue
+                    previous_id = str(previous.get("record_id") or "")
+                    if previous_id and previous.get("file_status") == "success":
+                        previous_success[previous_id] = previous
+                for record in records:
+                    previous = previous_success.get(record["record_id"])
+                    if previous:
+                        rows.append(previous)
+                        completed_ids.add(record["record_id"])
+                if completed_ids:
+                    console.print(f"[green]Skipping {len(completed_ids)} previously verified Wanfang PDFs from {manifest_path}.[/green]")
+        except (OSError, json.JSONDecodeError) as exc:
+            console.print(f"[yellow]Could not load prior Wanfang manifest for resume: {exc}[/yellow]")
+
+    def write_checkpoint() -> None:
+        manifest_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+        summary = {
+            "publisher": "Wanfang",
+            "total": len(records),
+            "processed": len(rows),
+            "success": sum(row.get("file_status") == "success" for row in rows),
+            "unverified": sum(row.get("file_status") == "unverified" for row in rows),
+            "missing": sum(row.get("file_status") == "missing" for row in rows),
+            "result_evidence": "browser_verified",
+        }
+        (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def screenshot_pages(item_evidence: Path, label: str) -> list[str]:
+        screenshots: list[str] = []
+        if context is None:
+            return screenshots
+        for page_index, browser_page in enumerate(list(context.pages), 1):
+            try:
+                shot = item_evidence / f"{label}_page_{page_index}.png"
+                browser_page.screenshot(path=str(shot), full_page=False)
+                screenshots.append(str(shot))
+            except Exception:
+                continue
+        return screenshots
+
+    try:
+        context, page, _ = open_wanfang_session(
+            cfg,
+            output_dir=run_dir,
+            profile_dir=profile_dir or None,
+        )
+        for index, record in enumerate(records, 1):
+            record_id = record["record_id"]
+            if record_id in completed_ids:
+                continue
+            title = record["title"]
+            item_evidence = evidence_dir / record_id
+            item_evidence.mkdir(parents=True, exist_ok=True)
+            row: dict[str, object] = {
+                "publisher": "Wanfang",
+                "record_id": record_id,
+                "title": title,
+                "query": record["query"],
+                "zotero_item_key": record["zotero_item_key"],
+                "route_attempted": "visible_cloakbrowser_search_download_popup_pdf",
+                "institution": _configured_subscription_institution(cfg),
+                "file_status": "missing",
+                "standard_status": "capture_failed",
+                "result_evidence": "browser_verified",
+                "next_action": "inspect_visible_wanfang_page",
+            }
+            console.print(f"[bold][{index}/{len(records)}][/bold] {title}")
+            try:
+                navigation = navigate_wanfang_search(page, query=record["query"], title=title)
+                row["navigation"] = navigation
+                row["before_screenshots"] = screenshot_pages(item_evidence, "before_download")
+                if navigation.get("verification_required") or navigation.get("session_status") == "human_verification_required":
+                    if verification_policy == "prompt":
+                        console.print("[yellow]Complete the visible Wanfang verification; InstSci will retry this record.[/yellow]")
+                        typer.prompt("Press Enter here after verification", default="", show_default=False)
+                        navigation = navigate_wanfang_search(page, query=record["query"], title=title)
+                        row["post_verification_navigation"] = navigation
+                    if navigation.get("verification_required") or navigation.get("session_status") == "human_verification_required":
+                        row.update(
+                            {
+                                "standard_status": "human_verification_required",
+                                "next_action": "complete_visible_human_verification_then_rerun_same_output",
+                                "evidence": (row.get("before_screenshots") or [""])[0],
+                            }
+                        )
+                        rows.append(row)
+                        write_checkpoint()
+                        break
+
+                result = capture_wanfang_pdf(
+                    page,
+                    title=title,
+                    output_path=pdf_dir / f"{record_id}.pdf",
+                    timeout_ms=75_000,
+                )
+                if result.get("verification_required") and verification_policy == "prompt":
+                    console.print("[yellow]Wanfang requested verification before download. Complete it in the browser.[/yellow]")
+                    typer.prompt("Press Enter here after verification", default="", show_default=False)
+                    if not wanfang_verification_visible(page):
+                        result = capture_wanfang_pdf(
+                            page,
+                            title=title,
+                            output_path=pdf_dir / f"{record_id}.pdf",
+                            timeout_ms=75_000,
+                        )
+                row.update(result)
+                row["after_screenshots"] = screenshot_pages(item_evidence, "after_download")
+                pdf_path = Path(str(result.get("pdf_path") or ""))
+                text = pdf_extractor.extract_text(pdf_path) if pdf_path.exists() else ""
+                title_match = bool(result.get("filename_title_match")) or ("".join(title.split()) in "".join(text.split()))
+                valid_pdf = bool(result.get("pdf_header_valid")) and int(result.get("size_bytes") or 0) > 10_000
+                success = valid_pdf and (title_match or not strict_title_match)
+                standard_status = (
+                    "success"
+                    if success
+                    else (
+                        "pdf_candidate_conflict"
+                        if valid_pdf
+                        else ("human_verification_required" if result.get("verification_required") else "capture_failed")
+                    )
+                )
+                row.update(
+                    {
+                        "article_url": safe_wanfang_url(str(getattr(page, "url", "") or "")),
+                        "title_match": title_match,
+                        "text_length": len(text),
+                        "file_status": "success" if success else ("unverified" if valid_pdf else "missing"),
+                        "standard_status": standard_status,
+                        "evidence": (row.get("after_screenshots") or row.get("before_screenshots") or [""])[0],
+                        "next_action": (
+                            "none"
+                            if standard_status == "success"
+                            else (
+                                "complete_visible_human_verification_then_rerun_same_output"
+                                if standard_status == "human_verification_required"
+                                else "inspect_downloaded_pdf"
+                            )
+                        ),
+                    }
+                )
+            except Exception as exc:
+                row["error"] = f"{type(exc).__name__}: {exc}"
+                row["after_screenshots"] = screenshot_pages(item_evidence, "failure")
+                row["evidence"] = (row.get("after_screenshots") or [""])[0]
+            rows.append(row)
+            write_checkpoint()
+            if row.get("standard_status") == "human_verification_required" and verification_policy == "stop":
+                break
+            if index < len(records):
+                time.sleep(delay)
+    finally:
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
+
+    success_count = sum(row.get("file_status") == "success" for row in rows)
+    console.print(f"[bold]Wanfang batch complete:[/bold] {success_count}/{len(records)} verified PDFs")
+    console.print(f"[dim]Manifest: {manifest_path}[/dim]")
+    if success_count != len(records):
         raise typer.Exit(2)
 
 

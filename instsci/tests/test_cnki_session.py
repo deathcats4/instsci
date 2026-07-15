@@ -1,9 +1,11 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from urllib.parse import parse_qs, urlparse
 
 from instsci.cnki_session import (
     classify_cnki_session,
+    cnki_search_url,
     cnki_verification_visible,
     load_cnki_batch,
     safe_page_url,
@@ -19,11 +21,25 @@ class CnkiSessionTests(TestCase):
             "human_verification_required",
         )
 
+    def test_cnki_captcha_type_query_requires_user(self) -> None:
+        self.assertEqual(
+            classify_cnki_session("https://kns.cnki.net/kcms2/article/abstract?captchaType=clickWord", "文章详情"),
+            "human_verification_required",
+        )
+
     def test_cnki_page_is_session_ready(self) -> None:
         self.assertEqual(
             classify_cnki_session("https://kns.cnki.net/kcms2/article/abstract?v=token", "文章详情"),
             "session_ready",
         )
+
+    def test_cnki_search_url_sets_keyword_and_preserves_params(self) -> None:
+        url = cnki_search_url("洪海沟 铀矿", "https://kns.cnki.net/kns8s/defaultresult/index?db=SCDB")
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        self.assertEqual(parsed.hostname, "kns.cnki.net")
+        self.assertEqual(params["db"], ["SCDB"])
+        self.assertEqual(params["kw"], ["洪海沟 铀矿"])
 
     def test_report_url_drops_query_tokens(self) -> None:
         self.assertEqual(
@@ -97,3 +113,18 @@ class CnkiSessionTests(TestCase):
             def get_by_text(self, _marker, exact=False): return Locator()
 
         self.assertTrue(cnki_verification_visible(Page()))
+
+    def test_article_page_ignores_generic_security_text_residue(self) -> None:
+        class Locator:
+            def __init__(self, visible): self.visible = visible
+            def count(self): return 1
+            def nth(self, _index): return self
+            def is_visible(self): return self.visible
+
+        class Page:
+            url = "https://kns.cnki.net/kcms2/article/abstract?captchaId=retained"
+            def title(self): return "测试题名 - 中国知网"
+            def get_by_text(self, marker, exact=False):
+                return Locator(marker == "安全验证")
+
+        self.assertFalse(cnki_verification_visible(Page()))

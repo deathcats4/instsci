@@ -93,6 +93,32 @@ class PublicLanguageTests(unittest.TestCase):
         self.assertIn("HTTP preflight", output)
         self.assertIn("browser", output.lower())
 
+    def test_chinese_literature_sites_reports_download_and_route_statuses(self):
+        result = self.runner.invoke(app, ["chinese-literature-sites", "--json"])
+        output = unstyle(result.output)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("instsci.chinese_literature_portals.v1", output)
+        self.assertIn("cnki", output)
+        self.assertIn("browser_verified_search_first", output)
+        self.assertIn("wanfang", output)
+        self.assertIn("browser_verified_search_download", output)
+        self.assertIn("cqvip", output)
+        self.assertIn("browser_verified_manual_broker_waf_blocked", output)
+        self.assertIn("download_verified_portals", output)
+
+    def test_wanfang_batch_help_describes_search_download_popup_flow(self):
+        result = self.runner.invoke(app, ["wanfang-batch", "--help"])
+        output = unstyle(result.output)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Wanfang", output)
+        self.assertIn("search-result", output)
+        self.assertIn("download popups", output)
+        self.assertIn("--profile-dir", output)
+        self.assertIn("--verification-", output)
+        self.assertIn("policy: stop or", output)
+
     def test_agents_requires_builtin_browser_for_publisher_pdf_verdicts(self):
         text = Path("AGENTS.md").read_text(encoding="utf-8")
 
@@ -235,6 +261,19 @@ class PublicLanguageTests(unittest.TestCase):
         self.assertIn("object/eid", text)
         self.assertIn("direct-first", text)
 
+    def test_inst_sci_skill_guides_chinese_literature_portal_workflow(self):
+        text = Path("skills/instsci/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("Chinese Literature Portals", text)
+        self.assertIn("instsci chinese-literature-sites", text)
+        self.assertIn("--navigation-mode search", text)
+        self.assertIn("Wanfang", text)
+        self.assertIn("CQVIP", text)
+        self.assertIn("Fulltext/Download", text)
+        self.assertIn("wanfang-batch", text)
+        self.assertIn("manual broker", text)
+        self.assertIn("not download-verified", text)
+
     def test_inst_sci_module_entrypoint_is_available(self):
         result = subprocess.run(
             [sys.executable, "-m", "instsci.cli", "--help"],
@@ -254,4 +293,3 @@ class PublicLanguageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

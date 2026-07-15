@@ -46,6 +46,43 @@ instsci publisher-batch dois.txt --publisher acs --institution "Institution Name
 
 Code-level work may use `PublisherBatchDownloader`, `ACSCloakBatchDownloader`, or the same visible built-in browser context.
 
+## Chinese Literature Portals
+
+Treat Chinese literature databases as visible-browser portal workflows, not as
+ordinary direct PDF URLs. Inspect support with:
+
+```powershell
+instsci chinese-literature-sites
+```
+
+- Production default: treat CNKI and Wanfang as the download-verified Chinese
+  literature portals. `download_verified_portals` should be `["cnki", "wanfang"]`.
+- CNKI is the primary Chinese full-text route: use the persistent CNKI profile
+  and the search-first batch path (`instsci cnki-batch ... --navigation-mode search`).
+  Prefer homepage/search-result navigation before saved detail URLs because
+  direct article/download URLs are more likely to trigger click-word verification.
+- Wanfang is a browser-verified search-download route: start at
+  `s.wanfangdata.com.cn`, click the result-row `下载` control, and capture the
+  PDF from the `Fulltext/Download` popup. Keep this flow in the same visible
+  browser context because the popup URL is generated per session. For batches,
+  use `instsci wanfang-batch records.json --output .\runs\wanfang`.
+- CQVIP is a manual broker only, not download-verified. The visible route can
+  reach a `www.cqvip.com` article page and `PDF下载`; manual `IP登录` can redirect
+  to `qikan.cqvip.com`, but qikan rendered blank in CloakBrowser and HTTP
+  preflight showed CQVIP cache-server 403/412 challenge responses. The tested
+  institution resource portal did not visibly list CQVIP, so entitlement is
+  unconfirmed. Do not force CQVIP automation or include it in default Chinese
+  literature batch downloads unless qikan page load and institution entitlement
+  are freshly browser-verified.
+- SinoMed and Duxiu/Chaoxing remain planned portal profiles until
+  screenshot-backed CloakBrowser runs verify their route and blocker states.
+- Prefer homepage/search-result navigation before saved article detail URLs for
+  every Chinese literature portal. Avoid parallel tabs until a portal is
+  browser-verified and rate behavior is known.
+- If CAPTCHA, SSO, reader checks, delivery flows, or other human verification
+  appear, let the user complete them in the visible browser. Do not auto-solve,
+  bypass, export cookies, or treat HTTP-only probes as final download evidence.
+
 ## Elsevier API Setup
 
 For Elsevier or ScienceDirect DOI retrieval, guide the user to configure a global Elsevier API key once:

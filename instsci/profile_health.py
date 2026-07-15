@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .chinese_literature import chinese_literature_session_domains
 from .config import DEFAULT_BASE_DIR, Config
 
 
@@ -37,7 +38,7 @@ def configured_session_domains(config: Config) -> tuple[str, ...]:
     Public builds should not ship a default institution. Institution domains are
     derived from the user's config or passed explicitly through config fields.
     """
-    domains: list[str] = list(DEFAULT_SESSION_DOMAINS)
+    domains: list[str] = [*chinese_literature_session_domains(), *DEFAULT_SESSION_DOMAINS]
     for attr in ("institution_session_domains", "institution_idp_host_suffixes"):
         domains.extend(str(value) for value in (getattr(config, attr, ()) or ()))
     for attr in ("webvpn_base_url", "ezproxy_base_url"):
@@ -66,7 +67,9 @@ def candidate_profile_dirs(config: Config, *, workspace: Path | None = None) -> 
     """Return known local browser profile candidates in priority order."""
     candidates = [
         Path(config.chrome_profile_dir) if config.chrome_profile_dir else None,
+        Path(config.cnki_profile_dir) if config.cnki_profile_dir else None,
         DEFAULT_BASE_DIR / "chrome-profile",
+        DEFAULT_BASE_DIR / "cnki-profile",
     ]
     if workspace is not None:
         candidates.append(workspace / ".chrome-sciencedirect")

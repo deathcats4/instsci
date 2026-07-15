@@ -8,6 +8,7 @@ from instsci.config import DEFAULT_BASE_DIR, Config
 from instsci.profile_health import (
     CHROME_EPOCH_OFFSET_SECONDS,
     candidate_profile_dirs,
+    configured_session_domains,
     inspect_browser_profile,
 )
 
@@ -83,6 +84,7 @@ class ProfileHealthTests(unittest.TestCase):
             cache_dir="cache",
             cookie_path="cookies.json",
             chrome_profile_dir=str(Path("chosen-profile")),
+            cnki_profile_dir=str(Path("cnki-profile")),
             carsi_cookie_dir="carsi",
         )
 
@@ -92,14 +94,25 @@ class ProfileHealthTests(unittest.TestCase):
             candidates,
             [
                 Path("chosen-profile"),
+                Path("cnki-profile"),
                 DEFAULT_BASE_DIR / "chrome-profile",
+                DEFAULT_BASE_DIR / "cnki-profile",
                 Path("workspace") / ".chrome-sciencedirect",
             ],
         )
 
+    def test_configured_session_domains_include_chinese_literature_domains(self):
+        cfg = Config(output_dir="out", cache_dir="cache", cookie_path="cookies.json")
+
+        domains = configured_session_domains(cfg)
+
+        self.assertIn("cnki.net", domains)
+        self.assertIn("cnki.com.cn", domains)
+        self.assertIn("wanfangdata.com.cn", domains)
+        self.assertIn("cqvip.com", domains)
+        self.assertIn("duxiu.com", domains)
+
 
 if __name__ == "__main__":
     unittest.main()
-
-
 
