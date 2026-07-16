@@ -3905,6 +3905,447 @@ def search_validate(
     if not report.get("valid"):
         raise typer.Exit(2)
 
+@app.command("search-live-eval")
+def search_live_eval(
+    query_file: Path = typer.Argument(help="JSON or text query set for live legacy vs hybrid evaluation."),
+    output: Path = typer.Option(Path("search_live_eval"), "--output", "-o", help="Output directory for manifest and per-query result files."),
+    limit: int = typer.Option(50, "--limit", help="Per-strategy search result limit."),
+    sources: str = typer.Option("semantic_scholar,openalex,crossref", "--sources", help="Comma-separated metadata sources."),
+    legacy_top: int = typer.Option(30, "--legacy-top", help="Legacy top-N results to pool."),
+    hybrid_top: int = typer.Option(30, "--hybrid-top", help="Hybrid top-N results to pool."),
+    channel_top: int = typer.Option(10, "--channel-top", help="Per-channel top-N results to pool from retrieval provenance."),
+    resume: bool = typer.Option(False, "--resume", help="Reuse successful per-query artifacts from an existing manifest."),
+):
+    """Run live legacy/hybrid search evaluation and write auditable artifacts."""
+    from .search_live_eval import load_query_set, load_query_set_payload, run_live_evaluation, validate_live_query_set
+
+    try:
+        config = Config.load()
+        query_set_validation = validate_live_query_set(load_query_set_payload(query_file))
+        output.mkdir(parents=True, exist_ok=True)
+        query_set_validation_path = output / "query_set_validation.json"
+        query_set_validation_path.write_text(
+            json.dumps(query_set_validation, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        if not query_set_validation.get("valid"):
+            console.print(f"[red]Live query set is invalid; see {query_set_validation_path}[/red]")
+            raise typer.Exit(2)
+        queries = load_query_set(query_file)
+        manifest = run_live_evaluation(
+            queries,
+            output,
+            limit=limit,
+            sources=sources,
+            email=config.email,
+            legacy_top=legacy_top,
+            hybrid_top=hybrid_top,
+            channel_top=channel_top,
+            resume=resume,
+        )
+        manifest["query_set_validation"] = str(query_set_validation_path)
+        manifest["query_set_validation_valid"] = bool(query_set_validation.get("valid"))
+        manifest["query_set_validation_error_count"] = len(query_set_validation.get("errors") or [])
+        manifest["query_set_validation_warning_count"] = len(query_set_validation.get("warnings") or [])
+        (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not run live search evaluation: {exc}[/red]")
+        raise typer.Exit(2)
+
+    failed = sum(1 for item in manifest.get("queries") or [] if item.get("status") != "success")
+    console.print(f"[green]Live evaluation queries:[/green] {manifest['query_count']} -> {output / 'manifest.json'}")
+    if manifest.get("review_packet"):
+        console.print(f"[dim]Review packet: {manifest['review_packet']}[/dim]")
+    if failed:
+        console.print(f"[yellow]{failed} queries failed; see manifest.json for details.[/yellow]")
+
+
+@app.command("search-query-set-validate")
+def search_query_set_validate(
+    query_file: Path = typer.Argument(help="JSON or text query set for 'instsci search-live-eval'."),
+    output: Path = typer.Option(Path("search_query_set_validation.json"), "--output", "-o", help="Query-set validation JSON output path."),
+):
+    """Validate a live-evaluation query set before running provider APIs."""
+    from .search_live_eval import load_query_set_payload, validate_live_query_set
+
+    try:
+        payload = load_query_set_payload(query_file)
+        report = validate_live_query_set(payload)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not validate live query set: {exc}[/red]")
+        raise typer.Exit(2)
+
+    summary = report.get("summary") or {}
+    color = "green" if report.get("valid") else "red"
+    console.print(
+        f"[{color}]Live query-set validation:[/{color}] {output} "
+        f"(errors={summary.get('error_count', 0)}, warnings={summary.get('warning_count', 0)})"
+    )
+    if not report.get("valid"):
+        raise typer.Exit(2)
+
+
+@app.command("search-live-eval-validate")
+def search_live_eval_validate(
+    manifest_file: Path = typer.Argument(help="Manifest JSON from 'instsci search-live-eval'."),
+    output: Path = typer.Option(Path("search_live_eval_validation.json"), "--output", "-o", help="Live-evaluation validation JSON output path."),
+):
+    """Validate a saved live-evaluation manifest contract."""
+    from .search_live_eval import validate_live_evaluation_manifest
+
+    try:
+        payload = json.loads(manifest_file.read_text(encoding="utf-8-sig"))
+        report = validate_live_evaluation_manifest(payload if isinstance(payload, dict) else {})
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not validate live evaluation manifest: {exc}[/red]")
+        raise typer.Exit(2)
+
+    summary = report.get("summary") or {}
+    color = "green" if report.get("valid") else "red"
+    console.print(
+        f"[{color}]Live evaluation validation:[/{color}] {output} "
+        f"(errors={summary.get('error_count', 0)}, warnings={summary.get('warning_count', 0)})"
+    )
+    if not report.get("valid"):
+        raise typer.Exit(2)
+
+
+@app.command("search-review-packet-validate")
+def search_review_packet_validate(
+    packet_file: Path = typer.Argument(help="Blinded review packet JSON from 'instsci search-live-eval'."),
+    output: Path = typer.Option(Path("relevance_review_packet_validation.json"), "--output", "-o", help="Review packet validation JSON output path."),
+):
+    """Validate a saved blinded relevance review packet contract."""
+    from .search_live_eval import validate_relevance_review_packet
+
+    try:
+        payload = json.loads(packet_file.read_text(encoding="utf-8-sig"))
+        report = validate_relevance_review_packet(payload if isinstance(payload, dict) else {})
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not validate relevance review packet: {exc}[/red]")
+        raise typer.Exit(2)
+
+    summary = report.get("summary") or {}
+    color = "green" if report.get("valid") else "red"
+    console.print(
+        f"[{color}]Relevance review packet validation:[/{color}] {output} "
+        f"(errors={summary.get('error_count', 0)}, warnings={summary.get('warning_count', 0)})"
+    )
+    if not report.get("valid"):
+        raise typer.Exit(2)
+
+
+@app.command("search-pool")
+def search_pool(
+    legacy: Path | None = typer.Option(None, "--legacy", help="Legacy search result JSON/CSV to include in the pool."),
+    hybrid: Path | None = typer.Option(None, "--hybrid", help="Hybrid search result JSON/CSV to include in the pool."),
+    output: Path = typer.Option(Path("relevance_pool.json"), "--output", "-o", help="Pooled relevance judgment template JSON."),
+    legacy_top: int = typer.Option(30, "--legacy-top", help="Legacy top-N results to pool."),
+    hybrid_top: int = typer.Option(30, "--hybrid-top", help="Hybrid top-N results to pool."),
+    channel_top: int = typer.Option(10, "--channel-top", help="Per-channel top-N results to pool from retrieval provenance."),
+):
+    """Build a source-blinded pooled relevance judgment template."""
+    if not legacy and not hybrid:
+        console.print("[red]Provide at least --legacy or --hybrid search results.[/red]")
+        raise typer.Exit(2)
+    from .search_benchmark import build_relevance_pool
+
+    try:
+        payloads: dict[str, dict[str, object]] = {}
+        if legacy:
+            payloads["legacy"] = load_search_payload(legacy)
+        if hybrid:
+            payloads["hybrid"] = load_search_payload(hybrid)
+        pool = build_relevance_pool(
+            payloads,
+            legacy_top=legacy_top,
+            hybrid_top=hybrid_top,
+            channel_top=channel_top,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not build relevance pool: {exc}[/red]")
+        raise typer.Exit(2)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(pool, ensure_ascii=False, indent=2), encoding="utf-8")
+    console.print(f"[green]Pooled {pool['count']} review items[/green] -> {output}")
+
+
+@app.command("search-pool-validate")
+def search_pool_validate(
+    pool_file: Path = typer.Argument(help="Relevance pool JSON from 'instsci search-pool' or live evaluation."),
+    output: Path = typer.Option(Path("relevance_pool_validation.json"), "--output", "-o", help="Relevance pool validation JSON output path."),
+):
+    """Validate a source-blinded pooled relevance judgment template."""
+    from .search_benchmark import validate_relevance_pool
+
+    try:
+        payload = json.loads(pool_file.read_text(encoding="utf-8-sig"))
+        report = validate_relevance_pool(payload if isinstance(payload, dict) else {})
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not validate relevance pool: {exc}[/red]")
+        raise typer.Exit(2)
+
+    summary = report.get("summary") or {}
+    color = "green" if report.get("valid") else "red"
+    console.print(
+        f"[{color}]Relevance pool validation:[/{color}] {output} "
+        f"(errors={summary.get('error_count', 0)}, warnings={summary.get('warning_count', 0)})"
+    )
+    if not report.get("valid"):
+        raise typer.Exit(2)
+
+
+@app.command("search-benchmark")
+def search_benchmark(
+    search_file: Path = typer.Argument(help="Structured search results from 'instsci search --output'."),
+    judgments: Path = typer.Argument(help="Pooled relevance judgments JSON."),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Optional JSON metrics output path."),
+    baseline: Path | None = typer.Option(None, "--baseline", help="Optional baseline search results to compare against."),
+    gate_output: Path | None = typer.Option(None, "--gate-output", help="Optional Search v2 release-gate report path. Requires --baseline."),
+    markdown_output: Path | None = typer.Option(None, "--markdown-output", help="Optional Markdown benchmark report path."),
+    must_find: Path | None = typer.Option(None, "--must-find", help="Optional JSON must-find identifiers for recall-only diagnostics."),
+):
+    """Evaluate a ranked search result file against offline relevance judgments."""
+    from .search_benchmark import (
+        apply_judgment_coverage_to_release_gate,
+        build_release_gate_report,
+        compare_ranked_results,
+        evaluate_ranked_results,
+        load_judgment_coverage,
+        load_judgments,
+        load_must_find,
+        render_benchmark_markdown,
+    )
+
+    try:
+        payload = load_search_payload(search_file)
+        judgment_map = load_judgments(judgments)
+        judgment_coverage = load_judgment_coverage(judgments)
+        must_find_ids = load_must_find(must_find) if must_find else None
+        if baseline:
+            baseline_payload = load_search_payload(baseline)
+            metrics = compare_ranked_results(
+                payload.get("results") or [],
+                baseline_payload.get("results") or [],
+                judgment_map,
+                must_find_ids=must_find_ids,
+            )
+        else:
+            if gate_output:
+                raise ValueError("--gate-output requires --baseline.")
+            metrics = evaluate_ranked_results(payload.get("results") or [], judgment_map, must_find_ids=must_find_ids)
+        metrics.update(judgment_coverage)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not evaluate search benchmark: {exc}[/red]")
+        raise typer.Exit(2)
+
+    if gate_output:
+        gate = build_release_gate_report([{**metrics, "query_id": str(search_file), "query": str(payload.get("query") or "")}])
+        gate = apply_judgment_coverage_to_release_gate(gate, judgment_coverage, query_id=str(search_file))
+        gate_output.parent.mkdir(parents=True, exist_ok=True)
+        gate_output.write_text(json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[green]Release gate:[/green] {gate_output} passed={gate['passed']}")
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[green]Benchmark metrics:[/green] {output}")
+    else:
+        console.print_json(json.dumps(metrics, ensure_ascii=False))
+
+    if markdown_output:
+        markdown_output.parent.mkdir(parents=True, exist_ok=True)
+        markdown_output.write_text(render_benchmark_markdown(metrics), encoding="utf-8")
+        console.print(f"[green]Benchmark markdown:[/green] {markdown_output}")
+
+
+@app.command("search-benchmark-validate")
+def search_benchmark_validate(
+    metrics_file: Path = typer.Argument(help="Benchmark metrics JSON from 'instsci search-benchmark'."),
+    output: Path = typer.Option(Path("search_benchmark_validation.json"), "--output", "-o", help="Benchmark validation JSON output path."),
+):
+    """Validate saved offline benchmark metrics without re-running evaluation."""
+    from .search_benchmark import validate_benchmark_metrics_report
+
+    try:
+        payload = json.loads(metrics_file.read_text(encoding="utf-8-sig"))
+        report = validate_benchmark_metrics_report(payload if isinstance(payload, dict) else {})
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not validate search benchmark metrics: {exc}[/red]")
+        raise typer.Exit(2)
+
+    summary = report.get("summary") or {}
+    color = "green" if report.get("valid") else "red"
+    console.print(
+        f"[{color}]Search benchmark validation:[/{color}] {output} "
+        f"(errors={summary.get('error_count', 0)}, warnings={summary.get('warning_count', 0)})"
+    )
+    if not report.get("valid"):
+        raise typer.Exit(2)
+
+
+@app.command("search-snapshot")
+def search_snapshot(
+    search_file: Path = typer.Argument(help="Structured search results from 'instsci search --output'."),
+    output: Path = typer.Option(Path("ranking_snapshot.json"), "--output", "-o", help="Ranking snapshot JSON path."),
+    label: str = typer.Option("", "--label", help="Optional snapshot label, e.g. legacy or hybrid."),
+):
+    """Freeze a saved search ranking into a stable ID snapshot."""
+    from .search_benchmark import write_ranking_snapshot
+
+    try:
+        payload = load_search_payload(search_file)
+        snapshot = write_ranking_snapshot(payload, output, label=label)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not write search ranking snapshot: {exc}[/red]")
+        raise typer.Exit(2)
+
+    console.print(f"[green]Ranking snapshot:[/green] {output} (count={snapshot.get('count', 0)})")
+
+
+@app.command("search-snapshot-validate")
+def search_snapshot_validate(
+    snapshot_file: Path = typer.Argument(help="Ranking snapshot JSON from 'instsci search-snapshot'."),
+    output: Path = typer.Option(Path("ranking_snapshot_validation.json"), "--output", "-o", help="Ranking snapshot validation JSON path."),
+):
+    """Validate a saved ranking snapshot contract."""
+    from .search_benchmark import validate_ranking_snapshot_payload
+
+    try:
+        payload = json.loads(snapshot_file.read_text(encoding="utf-8-sig"))
+        report = validate_ranking_snapshot_payload(payload if isinstance(payload, dict) else {})
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not validate ranking snapshot: {exc}[/red]")
+        raise typer.Exit(2)
+
+    summary = report.get("summary") or {}
+    color = "green" if report.get("valid") else "red"
+    console.print(
+        f"[{color}]Ranking snapshot validation:[/{color}] {output} "
+        f"(errors={summary.get('error_count', 0)}, warnings={summary.get('warning_count', 0)})"
+    )
+    if not report.get("valid"):
+        raise typer.Exit(2)
+
+
+@app.command("search-snapshot-check")
+def search_snapshot_check(
+    search_file: Path = typer.Argument(help="Structured search results to compare."),
+    snapshot_file: Path = typer.Argument(help="Ranking snapshot JSON from 'instsci search-snapshot'."),
+    output: Path = typer.Option(Path("ranking_snapshot_check.json"), "--output", "-o", help="Snapshot check JSON path."),
+):
+    """Compare a saved search result against a ranking snapshot."""
+    from .search_benchmark import write_ranking_snapshot_check
+
+    try:
+        payload = load_search_payload(search_file)
+        snapshot_payload = json.loads(snapshot_file.read_text(encoding="utf-8-sig"))
+        report = write_ranking_snapshot_check(payload, snapshot_payload, output)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not check search ranking snapshot: {exc}[/red]")
+        raise typer.Exit(2)
+
+    summary = report.get("summary") or {}
+    matched = bool(report.get("matched"))
+    color = "green" if matched else "red"
+    console.print(
+        f"[{color}]Ranking snapshot check:[/{color}] {output} "
+        f"(rank_changes={summary.get('rank_changed_count', 0)}, "
+        f"missing={summary.get('missing_count', 0)}, new={summary.get('new_count', 0)})"
+    )
+    if not matched:
+        raise typer.Exit(2)
+
+
+@app.command("search-snapshot-check-validate")
+def search_snapshot_check_validate(
+    check_file: Path = typer.Argument(help="Ranking snapshot check JSON from 'instsci search-snapshot-check'."),
+    output: Path = typer.Option(Path("ranking_snapshot_check_validation.json"), "--output", "-o", help="Ranking snapshot check validation JSON path."),
+):
+    """Validate a saved ranking snapshot drift report contract."""
+    from .search_benchmark import validate_ranking_snapshot_check
+
+    try:
+        payload = json.loads(check_file.read_text(encoding="utf-8-sig"))
+        report = validate_ranking_snapshot_check(payload if isinstance(payload, dict) else {})
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not validate ranking snapshot check: {exc}[/red]")
+        raise typer.Exit(2)
+
+    summary = report.get("summary") or {}
+    color = "green" if report.get("valid") else "red"
+    console.print(
+        f"[{color}]Ranking snapshot check validation:[/{color}] {output} "
+        f"(errors={summary.get('error_count', 0)}, warnings={summary.get('warning_count', 0)})"
+    )
+    if not report.get("valid"):
+        raise typer.Exit(2)
+
+@app.command("search-gate")
+def search_gate(
+    manifest: Path = typer.Argument(help="Manifest from 'instsci search-live-eval'."),
+    output: Path = typer.Option(Path("release_gate.json"), "--output", "-o", help="Manifest-level Search v2 release-gate report path."),
+    markdown_output: Path | None = typer.Option(None, "--markdown-output", help="Optional Markdown release-gate summary path."),
+):
+    """Aggregate live-evaluation query artifacts into a Search v2 release gate."""
+    from .search_live_eval import evaluate_live_evaluation_gate, render_release_gate_markdown
+
+    try:
+        report = evaluate_live_evaluation_gate(manifest)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not build search release gate: {exc}[/red]")
+        raise typer.Exit(2)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    console.print(f"[green]Release gate:[/green] {output} passed={report['passed']}")
+    if markdown_output:
+        markdown_output.parent.mkdir(parents=True, exist_ok=True)
+        markdown_output.write_text(render_release_gate_markdown(report), encoding="utf-8")
+        console.print(f"[green]Release gate markdown:[/green] {markdown_output}")
+
+
+@app.command("search-gate-validate")
+def search_gate_validate(
+    gate_file: Path = typer.Argument(help="Search release-gate JSON from 'instsci search-gate' or 'search-benchmark --gate-output'."),
+    output: Path = typer.Option(Path("release_gate_validation.json"), "--output", "-o", help="Search release-gate validation JSON output path."),
+):
+    """Validate a saved Search release-gate report contract."""
+    from .search_benchmark import validate_release_gate_report
+
+    try:
+        payload = json.loads(gate_file.read_text(encoding="utf-8-sig"))
+        report = validate_release_gate_report(payload if isinstance(payload, dict) else {})
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not validate search release gate: {exc}[/red]")
+        raise typer.Exit(2)
+
+    summary = report.get("summary") or {}
+    color = "green" if report.get("valid") else "red"
+    console.print(
+        f"[{color}]Search release-gate validation:[/{color}] {output} "
+        f"(errors={summary.get('error_count', 0)}, warnings={summary.get('warning_count', 0)})"
+    )
+    if not report.get("valid"):
+        raise typer.Exit(2)
+
 @app.command()
 def cache(
     action: str = typer.Argument(help="Action: 'clear' to remove cached results."),

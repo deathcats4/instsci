@@ -1,0 +1,10 @@
+{
+  "schema": "instsci.search_results.v2",
+  "query": "sulfur isotope uranium mineralization",
+  "results": [
+    {"index": 1, "title": "Sulfur isotope evidence in uranium deposits", "doi": "10.1000/core", "year": 2021},
+    {"index": 2, "title": "Fluid sources in sandstone uranium", "doi": "10.1000/fluid", "year": 2020},
+    {"index": 3, "title": "General isotope review", "doi": "10.1000/review", "year": 2015},
+    {"index": 4, "title": "Unrelated pyrite methods", "doi": "10.1000/methods", "year": 2022}
+  ]
+}
