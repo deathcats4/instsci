@@ -26,6 +26,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import Config
+from .chinese_literature import normalize_author_name
 from .fetcher import PaperFetcher
 from . import multi_search
 from .publisher_matrix import manifest_next_action, manifest_suggested_paths, normalize_suggested_paths
@@ -65,6 +66,9 @@ STANDARD_STATUSES = {
     "capture_failed",
     "browser_group_pending",
     "unsupported_publisher",
+    "ambiguous_search_result",
+    "daily_limit_reached",
+    "quota_state_error",
 }
 FILE_STATUSES = {"success", "unverified", "missing"}
 RESULT_EVIDENCE_VALUES = {
@@ -74,6 +78,31 @@ RESULT_EVIDENCE_VALUES = {
     "http_preflight",
     "not_verified",
 }
+
+
+def _chinese_quota_ledger_path(config: Config) -> Path:
+    """Return the shared local CNKI/Wanfang quota ledger path."""
+    return Path(config.cache_dir).expanduser() / "chinese_download_quota.json"
+
+
+def _verify_chinese_pdf_identity(
+    title: str,
+    first_author: str,
+    text: str,
+    *,
+    author_required: bool,
+) -> dict[str, bool]:
+    """Verify title and, after author disambiguation, first-author identity."""
+    compact_text = "".join(str(text or "").split()).casefold()
+    compact_title = "".join(str(title or "").split()).casefold()
+    normalized_author = normalize_author_name(first_author)
+    author_match = bool(normalized_author and normalized_author in normalize_author_name(text))
+    title_match = bool(compact_title and compact_title in compact_text)
+    return {
+        "title_match": title_match,
+        "author_match": author_match,
+        "verified": title_match and (author_match or not author_required),
+    }
 
 
 def _setup_logging(verbose: bool = False):
@@ -1669,6 +1698,7 @@ def cnki_batch(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ):
     """Download a small CNKI batch in one persistent visible browser session."""
+    from .chinese_download_quota import ChineseDownloadQuotaError, reserve_chinese_download
     from .cnki_session import (
         capture_cnki_pdf,
         CNKI_HOST_SUFFIXES,
@@ -1758,12 +1788,14 @@ def cnki_batch(
             if record_id in completed_ids:
                 continue
             title = record["title"]
+            first_author = record["first_author"]
             item_evidence = evidence_dir / record_id
             item_evidence.mkdir(parents=True, exist_ok=True)
             row: dict[str, object] = {
                 "publisher": "CNKI",
                 "record_id": record_id,
                 "title": title,
+                "first_author": first_author,
                 "zotero_item_key": record["zotero_item_key"],
                 "route_attempted": (
                     "persistent_cloakbrowser_search_pdf_button"
@@ -1784,11 +1816,21 @@ def cnki_batch(
                         title=title,
                         fallback_url=record["url"],
                         record_id=record_id,
+                        first_author=first_author,
                         auth_domains=auth_domains,
                     )
                 else:
                     navigation = navigate_cnki_article(page, record["url"], auth_domains=auth_domains)
                 row["navigation"] = navigation
+                search_result = navigation.get("search_result") if isinstance(navigation.get("search_result"), dict) else {}
+                for field in (
+                    "title_candidate_count",
+                    "author_match_count",
+                    "author_disambiguation_used",
+                    "selection_method",
+                ):
+                    if field in search_result:
+                        row[field] = search_result[field]
                 session_status = str(
                     navigation.get("session_status")
                     or classify_cnki_session(str(getattr(page, "url", "") or ""), "", auth_domains=auth_domains)
@@ -1811,6 +1853,19 @@ def cnki_batch(
                     rows.append(row)
                     write_checkpoint()
                     break
+                if session_status == "ambiguous_search_result":
+                    failure = item_evidence / "ambiguous_search_result.png"
+                    page.screenshot(path=str(failure), full_page=False)
+                    row.update(
+                        {
+                            "standard_status": "ambiguous_search_result",
+                            "next_action": "inspect_visible_search_results_and_select_manually",
+                            "evidence": str(failure),
+                        }
+                    )
+                    rows.append(row)
+                    write_checkpoint()
+                    continue
                 if (
                     session_status == "human_verification_required"
                     or navigation.get("verification_required")
@@ -1843,6 +1898,7 @@ def cnki_batch(
                                 title=title,
                                 fallback_url=record["url"],
                                 record_id=record_id,
+                                first_author=first_author,
                                 auth_domains=auth_domains,
                             )
                             row["post_verification_navigation"] = renavigation
@@ -1860,8 +1916,76 @@ def cnki_batch(
                     rows.append(row)
                     write_checkpoint()
                     break
+                effective_navigation = (
+                    row.get("post_verification_navigation")
+                    if isinstance(row.get("post_verification_navigation"), dict)
+                    else navigation
+                )
+                effective_search_result = (
+                    effective_navigation.get("search_result")
+                    if isinstance(effective_navigation, dict)
+                    and isinstance(effective_navigation.get("search_result"), dict)
+                    else search_result
+                )
+                for field in (
+                    "title_candidate_count",
+                    "author_match_count",
+                    "author_disambiguation_used",
+                    "selection_method",
+                ):
+                    if field in effective_search_result:
+                        row[field] = effective_search_result[field]
+                if effective_search_result.get("reason") == "ambiguous_search_result":
+                    failure = item_evidence / "ambiguous_search_result.png"
+                    page.screenshot(path=str(failure), full_page=False)
+                    row.update(
+                        {
+                            "standard_status": "ambiguous_search_result",
+                            "next_action": "inspect_visible_search_results_and_select_manually",
+                            "evidence": str(failure),
+                            "title_candidate_count": effective_search_result.get("title_candidate_count", 0),
+                            "author_match_count": effective_search_result.get("author_match_count", 0),
+                            "author_disambiguation_used": effective_search_result.get("author_disambiguation_used", False),
+                        }
+                    )
+                    rows.append(row)
+                    write_checkpoint()
+                    continue
                 before = item_evidence / "before_pdf_click.png"
                 page.screenshot(path=str(before), full_page=False)
+                try:
+                    quota = reserve_chinese_download(
+                        _chinese_quota_ledger_path(cfg),
+                        portal="cnki",
+                        record_id=record_id,
+                    )
+                except ChineseDownloadQuotaError as exc:
+                    row.update(
+                        {
+                            "standard_status": "quota_state_error",
+                            "result_evidence": "not_verified",
+                            "next_action": "inspect_or_repair_local_quota_state_before_retry",
+                            "error": str(exc),
+                            "evidence": str(before),
+                        }
+                    )
+                    rows.append(row)
+                    write_checkpoint()
+                    break
+                row.setdefault("quota_attempts", []).append(quota.to_json())
+                row["quota"] = quota.to_json()
+                if not quota.allowed:
+                    row.update(
+                        {
+                            "standard_status": "daily_limit_reached",
+                            "result_evidence": "not_verified",
+                            "next_action": "stop_batch_and_resume_next_local_day",
+                            "evidence": str(before),
+                        }
+                    )
+                    rows.append(row)
+                    write_checkpoint()
+                    break
                 result = capture_cnki_pdf(page, output_path=pdf_dir / f"{record_id}.pdf", timeout_ms=45_000)
                 if result.get("verification_required"):
                     if verification_policy == "prompt":
@@ -1884,20 +2008,60 @@ def cnki_batch(
                                 title=title,
                                 fallback_url=record["url"],
                                 record_id=record_id,
+                                first_author=first_author,
                                 auth_domains=auth_domains,
                             )
                             row["download_post_verification_navigation"] = renavigation
                         if not settle.get("verification_required"):
+                            try:
+                                quota = reserve_chinese_download(
+                                    _chinese_quota_ledger_path(cfg),
+                                    portal="cnki",
+                                    record_id=record_id,
+                                )
+                            except ChineseDownloadQuotaError as exc:
+                                row.update(
+                                    {
+                                        "standard_status": "quota_state_error",
+                                        "result_evidence": "not_verified",
+                                        "next_action": "inspect_or_repair_local_quota_state_before_retry",
+                                        "error": str(exc),
+                                    }
+                                )
+                                rows.append(row)
+                                write_checkpoint()
+                                break
+                            row.setdefault("quota_attempts", []).append(quota.to_json())
+                            row["quota"] = quota.to_json()
+                            if not quota.allowed:
+                                row.update(
+                                    {
+                                        "standard_status": "daily_limit_reached",
+                                        "result_evidence": "not_verified",
+                                        "next_action": "stop_batch_and_resume_next_local_day",
+                                    }
+                                )
+                                rows.append(row)
+                                write_checkpoint()
+                                break
                             result = capture_cnki_pdf(page, output_path=pdf_dir / f"{record_id}.pdf", timeout_ms=45_000)
                 after = item_evidence / "after_pdf_click.png"
                 page.screenshot(path=str(after), full_page=False)
                 pdf_path = Path(str(result.get("pdf_path") or ""))
                 text = pdf_extractor.extract_text(pdf_path) if pdf_path.exists() else ""
-                title_match = "".join(title.split()) in "".join(text.split())
+                identity = _verify_chinese_pdf_identity(
+                    title,
+                    first_author,
+                    text,
+                    author_required=bool(row.get("author_disambiguation_used")),
+                )
+                title_match = identity["title_match"]
+                author_match = identity["author_match"]
                 valid_pdf = bool(result.get("pdf_header_valid")) and int(result.get("size_bytes") or 0) > 10_000
+                verified = valid_pdf and identity["verified"]
                 standard_status = (
                     "success"
-                    if valid_pdf and title_match
+                    if verified
                     else (
                         "pdf_candidate_conflict"
                         if valid_pdf
@@ -1909,8 +2073,9 @@ def cnki_batch(
                     {
                         "article_url": safe_page_url(str(getattr(page, "url", "") or "")),
                         "title_match": title_match,
+                        "author_match": author_match,
                         "text_length": len(text),
-                        "file_status": "success" if valid_pdf and title_match else ("unverified" if valid_pdf else "missing"),
+                        "file_status": "success" if verified else ("unverified" if valid_pdf else "missing"),
                         "standard_status": standard_status,
                         "evidence": str(after),
                         "next_action": (
@@ -1964,9 +2129,11 @@ def wanfang_batch(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ):
     """Download a small Wanfang batch through search-result download popups."""
+    from .chinese_download_quota import ChineseDownloadQuotaError, reserve_chinese_download
     from .extractors import pdf_extractor
     from .wanfang_session import (
         capture_wanfang_pdf,
+        inspect_wanfang_result_download,
         load_wanfang_batch,
         navigate_wanfang_search,
         open_wanfang_session,
@@ -2066,12 +2233,14 @@ def wanfang_batch(
             if record_id in completed_ids:
                 continue
             title = record["title"]
+            first_author = record["first_author"]
             item_evidence = evidence_dir / record_id
             item_evidence.mkdir(parents=True, exist_ok=True)
             row: dict[str, object] = {
                 "publisher": "Wanfang",
                 "record_id": record_id,
                 "title": title,
+                "first_author": first_author,
                 "query": record["query"],
                 "zotero_item_key": record["zotero_item_key"],
                 "route_attempted": "visible_cloakbrowser_search_download_popup_pdf",
@@ -2121,9 +2290,75 @@ def wanfang_batch(
                         write_checkpoint()
                         break
 
+                selection = inspect_wanfang_result_download(
+                    page,
+                    title=title,
+                    first_author=first_author,
+                )
+                row["selection"] = selection
+                for field in (
+                    "title_candidate_count",
+                    "author_match_count",
+                    "author_disambiguation_used",
+                ):
+                    if field in selection:
+                        row[field] = selection[field]
+                if not selection.get("selected"):
+                    reason = str(selection.get("reason") or "no_exact_title_result")
+                    row.update(
+                        {
+                            "standard_status": (
+                                "ambiguous_search_result"
+                                if reason == "ambiguous_search_result"
+                                else "capture_failed"
+                            ),
+                            "next_action": (
+                                "inspect_visible_search_results_and_select_manually"
+                                if reason == "ambiguous_search_result"
+                                else "inspect_wanfang_search_results_or_refine_query"
+                            ),
+                            "evidence": (row.get("before_screenshots") or [""])[0],
+                        }
+                    )
+                    rows.append(row)
+                    write_checkpoint()
+                    continue
+                try:
+                    quota = reserve_chinese_download(
+                        _chinese_quota_ledger_path(cfg),
+                        portal="wanfang",
+                        record_id=record_id,
+                    )
+                except ChineseDownloadQuotaError as exc:
+                    row.update(
+                        {
+                            "standard_status": "quota_state_error",
+                            "result_evidence": "not_verified",
+                            "next_action": "inspect_or_repair_local_quota_state_before_retry",
+                            "error": str(exc),
+                        }
+                    )
+                    rows.append(row)
+                    write_checkpoint()
+                    break
+                row.setdefault("quota_attempts", []).append(quota.to_json())
+                row["quota"] = quota.to_json()
+                if not quota.allowed:
+                    row.update(
+                        {
+                            "standard_status": "daily_limit_reached",
+                            "result_evidence": "not_verified",
+                            "next_action": "stop_batch_and_resume_next_local_day",
+                        }
+                    )
+                    rows.append(row)
+                    write_checkpoint()
+                    break
                 result = capture_wanfang_pdf(
                     page,
                     title=title,
+                    first_author=first_author,
+                    selection=selection,
                     output_path=pdf_dir / f"{record_id}.pdf",
                     timeout_ms=75_000,
                 )
@@ -2131,12 +2366,57 @@ def wanfang_batch(
                     console.print("[yellow]Wanfang requested verification before download. Complete it in the browser.[/yellow]")
                     typer.prompt("Press Enter here after verification", default="", show_default=False)
                     if not wanfang_verification_visible(page):
-                        result = capture_wanfang_pdf(
+                        selection = inspect_wanfang_result_download(
                             page,
                             title=title,
-                            output_path=pdf_dir / f"{record_id}.pdf",
-                            timeout_ms=75_000,
+                            first_author=first_author,
                         )
+                        row["retry_selection"] = selection
+                        if not selection.get("selected"):
+                            result = {
+                                "reason": selection.get("reason") or "no_exact_title_result",
+                                "download_click": selection,
+                            }
+                        else:
+                            try:
+                                quota = reserve_chinese_download(
+                                    _chinese_quota_ledger_path(cfg),
+                                    portal="wanfang",
+                                    record_id=record_id,
+                                )
+                            except ChineseDownloadQuotaError as exc:
+                                row.update(
+                                    {
+                                        "standard_status": "quota_state_error",
+                                        "result_evidence": "not_verified",
+                                        "next_action": "inspect_or_repair_local_quota_state_before_retry",
+                                        "error": str(exc),
+                                    }
+                                )
+                                rows.append(row)
+                                write_checkpoint()
+                                break
+                            row.setdefault("quota_attempts", []).append(quota.to_json())
+                            row["quota"] = quota.to_json()
+                            if not quota.allowed:
+                                row.update(
+                                    {
+                                        "standard_status": "daily_limit_reached",
+                                        "result_evidence": "not_verified",
+                                        "next_action": "stop_batch_and_resume_next_local_day",
+                                    }
+                                )
+                                rows.append(row)
+                                write_checkpoint()
+                                break
+                            result = capture_wanfang_pdf(
+                                page,
+                                title=title,
+                                first_author=first_author,
+                                selection=selection,
+                                output_path=pdf_dir / f"{record_id}.pdf",
+                                timeout_ms=75_000,
+                            )
                 row.update(result)
                 row["after_screenshots"] = screenshot_pages(item_evidence, "after_download")
                 pdf_path = wanfang_downloaded_pdf_path(result)
@@ -2144,6 +2424,8 @@ def wanfang_batch(
                 capture_summary = summarize_wanfang_capture_result(
                     result,
                     title=title,
+                    first_author=first_author,
+                    author_required=bool(selection.get("author_disambiguation_used")),
                     text=text,
                     strict_title_match=strict_title_match,
                     pdf_path=pdf_path,
@@ -2152,6 +2434,7 @@ def wanfang_batch(
                     {
                         "article_url": safe_wanfang_url(str(getattr(page, "url", "") or "")),
                         "title_match": capture_summary["title_match"],
+                        "author_match": capture_summary["author_match"],
                         "text_length": capture_summary["text_length"],
                         "file_status": capture_summary["file_status"],
                         "standard_status": capture_summary["standard_status"],

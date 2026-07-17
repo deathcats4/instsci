@@ -328,6 +328,8 @@ def summarize_wanfang_capture_result(
     result: dict[str, object],
     *,
     title: str,
+    first_author: str = "",
+    author_required: bool = False,
     text: str,
     strict_title_match: bool,
     pdf_path: Path | None = None,
@@ -335,12 +337,14 @@ def summarize_wanfang_capture_result(
     """Return manifest status fields for a captured Wanfang download result."""
     resolved_pdf_path = wanfang_downloaded_pdf_path(result) if pdf_path is None else pdf_path
     title_match = bool(result.get("filename_title_match")) or (_compact_text(title) in _compact_text(text))
+    normalized_author = normalize_author_name(first_author)
+    author_match = bool(normalized_author and normalized_author in normalize_author_name(text))
     valid_pdf = (
         resolved_pdf_path is not None
         and bool(result.get("pdf_header_valid"))
         and _capture_size_bytes(result) > 10_000
     )
-    success = valid_pdf and (title_match or not strict_title_match)
+    success = valid_pdf and (title_match or not strict_title_match) and (author_match or not author_required)
     standard_status = (
         "success"
         if success
@@ -352,6 +356,8 @@ def summarize_wanfang_capture_result(
     )
     return {
         "title_match": title_match,
+        "author_match": author_match,
+        "author_required": author_required,
         "valid_pdf": valid_pdf,
         "text_length": len(text),
         "file_status": "success" if success else ("unverified" if valid_pdf else "missing"),

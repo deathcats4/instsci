@@ -323,6 +323,39 @@ class WanfangSessionTests(TestCase):
         self.assertEqual(summary["file_status"], "missing")
         self.assertEqual(summary["standard_status"], "capture_failed")
 
+    def test_summarize_wanfang_capture_requires_author_after_disambiguation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pdf_path = Path(tmp) / "paper.pdf"
+            pdf_path.write_bytes(b"%PDF-" + b"x" * 12000)
+            result = {
+                "pdf_path": str(pdf_path),
+                "pdf_header_valid": True,
+                "size_bytes": pdf_path.stat().st_size,
+            }
+
+            conflict = summarize_wanfang_capture_result(
+                result,
+                title="同题研究",
+                first_author="李四",
+                author_required=True,
+                text="同题研究 张三",
+                strict_title_match=True,
+            )
+            success = summarize_wanfang_capture_result(
+                result,
+                title="同题研究",
+                first_author="李四",
+                author_required=True,
+                text="同题研究 李四",
+                strict_title_match=True,
+            )
+
+        self.assertFalse(conflict["author_match"])
+        self.assertEqual(conflict["file_status"], "unverified")
+        self.assertEqual(conflict["standard_status"], "pdf_candidate_conflict")
+        self.assertTrue(success["author_match"])
+        self.assertEqual(success["file_status"], "success")
+
     def test_wanfang_downloaded_pdf_path_ignores_empty_or_directory_paths(self) -> None:
         self.assertIsNone(wanfang_downloaded_pdf_path({}))
         self.assertIsNone(wanfang_downloaded_pdf_path({"pdf_path": ""}))

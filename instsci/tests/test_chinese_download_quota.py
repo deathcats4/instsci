@@ -118,6 +118,19 @@ class ChineseDownloadQuotaTests(TestCase):
 
         self.assertFalse(self.ledger.exists())
 
+    def test_unusable_parent_path_fails_as_quota_state_error(self) -> None:
+        blocker = Path(self.temp.name) / "not-a-directory"
+        blocker.write_text("blocked", encoding="utf-8")
+
+        with self.assertRaisesRegex(ChineseDownloadQuotaError, "could not prepare quota directory"):
+            reserve_chinese_download(
+                blocker / "quota.json",
+                portal="cnki",
+                record_id="a",
+                now=self.now,
+                lock_timeout=0.05,
+            )
+
 
 if __name__ == "__main__":
     import unittest

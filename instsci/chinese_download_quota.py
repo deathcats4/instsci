@@ -110,7 +110,10 @@ def reserve_chinese_download(
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         raise ValueError("limit must be a positive integer")
     path = Path(ledger_path).expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ChineseDownloadQuotaError(f"could not prepare quota directory: {path.parent}: {exc}") from exc
     lock_path = path.with_suffix(path.suffix + ".lock")
     _acquire_lock(lock_path, lock_timeout)
     try:
