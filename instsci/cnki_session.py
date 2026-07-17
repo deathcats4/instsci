@@ -18,6 +18,7 @@ from .chinese_literature import (
     classify_chinese_literature_page,
     first_author_from_record,
     get_chinese_literature_portal,
+    normalize_author_name,
 )
 from .cloakbrowser_compat import prepare_cloakbrowser_runtime
 from .config import Config
@@ -210,47 +211,164 @@ def submit_cnki_search(page: Any, title: str) -> dict[str, object]:
         return {"submitted": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def click_cnki_search_result(page: Any, *, title: str, record_id: str = "") -> dict[str, object]:
-    """Click the best matching CNKI search result in the current tab."""
+def choose_cnki_search_candidate(
+    candidates: list[dict[str, object]],
+    *,
+    title: str,
+    record_id: str = "",
+    first_author: str = "",
+) -> dict[str, object]:
+    """Choose one CNKI result without guessing between ambiguous identities."""
+    expected_title = _compact_text(title)
+    stable_id = str(record_id or "").strip().upper()
+    exact_title = [
+        dict(candidate)
+        for candidate in candidates
+        if expected_title and _compact_text(str(candidate.get("title") or "")) == expected_title
+    ]
+    base: dict[str, object] = {
+        "selected": False,
+        "candidate": None,
+        "reason": "no_exact_title_result" if not exact_title else "ambiguous_search_result",
+        "selection_method": "",
+        "candidate_count": len(candidates),
+        "title_candidate_count": len(exact_title),
+        "author_match_count": 0,
+        "author_disambiguation_used": False,
+    }
+    if stable_id:
+        stable_matches = [
+            dict(candidate)
+            for candidate in candidates
+            if stable_id in str(candidate.get("href") or "").upper()
+        ]
+        if len(stable_matches) == 1:
+            base.update(
+                {
+                    "selected": True,
+                    "candidate": stable_matches[0],
+                    "reason": "",
+                    "selection_method": "record_id",
+                }
+            )
+            return base
+    if len(exact_title) == 1:
+        base.update(
+            {
+                "selected": True,
+                "candidate": exact_title[0],
+                "reason": "",
+                "selection_method": "exact_title",
+            }
+        )
+        return base
+    if len(exact_title) < 2:
+        return base
+    normalized_author = normalize_author_name(first_author)
+    base["author_disambiguation_used"] = True
+    if not normalized_author:
+        return base
+    author_matches = [
+        candidate
+        for candidate in exact_title
+        if normalized_author in normalize_author_name(candidate.get("row_text"))
+    ]
+    base["author_match_count"] = len(author_matches)
+    if len(author_matches) == 1:
+        base.update(
+            {
+                "selected": True,
+                "candidate": author_matches[0],
+                "reason": "",
+                "selection_method": "first_author",
+            }
+        )
+    return base
+
+
+def click_cnki_search_result(
+    page: Any,
+    *,
+    title: str,
+    record_id: str = "",
+    first_author: str = "",
+) -> dict[str, object]:
+    """Inspect, revalidate, and click one unambiguous CNKI result."""
     expected = _compact_text(title)
     stable_id = str(record_id or "").upper()
+    normalized_author = normalize_author_name(first_author)
     try:
-        raw = page.evaluate(
-            """({ expected, recordId }) => {
-              const norm = (s) => String(s || "").replace(/\\s+/g, "").toLowerCase();
-              const links = [...document.querySelectorAll('a[href]')].map((a, index) => {
+        raw_candidates = page.evaluate(
+            """() => {
+              const links = [...document.querySelectorAll('a[href]')];
+              return links.map((a, index) => {
                 const href = a.href || "";
-                const text = (a.innerText || a.title || "").replace(/\\s+/g, " ").trim();
-                let score = 0;
-                const ntext = norm(text);
-                const upperHref = href.toUpperCase();
-                if (!/cnki\\.(net|com\\.cn)/i.test(href)) score -= 100;
-                if (/detail|kcms|kns8s\\/Detail|filename|dbcode/i.test(href)) score += 20;
-                if (/download|pdf|caj|author|reference|rbt/i.test(href)) score -= 30;
-                if (recordId && upperHref.includes(recordId)) score += 100;
-                if (expected && ntext === expected) score += 90;
-                else if (expected && ntext && (ntext.includes(expected) || expected.includes(ntext))) score += 60;
-                return { a, index, href, text, score };
-              }).filter((x) => x.href && x.text && x.score > 0);
-              links.sort((a, b) => b.score - a.score);
-              const best = links[0];
-              if (!best || best.score < 20) {
-                return { clicked: false, result_found: false, candidate_count: links.length };
-              }
-              best.a.target = "_self";
-              best.a.click();
-              return {
-                clicked: true,
-                result_found: true,
-                href: best.href,
-                text: best.text,
-                score: best.score,
-                candidate_count: links.length,
-              };
-            }""",
-            {"expected": expected, "recordId": stable_id},
+                const title = (a.innerText || a.title || "").replace(/\\s+/g, " ").trim();
+                if (
+                  !/cnki\\.(net|com\\.cn)/i.test(href) ||
+                  !/detail|kcms|kns8s\\/Detail|filename|dbcode/i.test(href) ||
+                  /download|pdf|caj|author|reference|rbt/i.test(href) ||
+                  !title
+                ) return null;
+                const row = a.closest('tr,li,.result-item,.result,.list-item,.search-result,dd') || a.parentElement;
+                const candidateId = `instsci-cnki-${Date.now()}-${Math.random().toString(36).slice(2)}-${index}`;
+                a.setAttribute('data-inst-cnki-candidate-id', candidateId);
+                return {
+                  index,
+                  candidate_id: candidateId,
+                  href,
+                  title,
+                  row_text: String(row?.innerText || title).replace(/\\s+/g, " ").trim(),
+                };
+              }).filter(Boolean);
+            }"""
         )
-        return dict(raw or {})
+        candidates = [dict(candidate) for candidate in (raw_candidates or [])]
+        selection = choose_cnki_search_candidate(
+            candidates,
+            title=title,
+            record_id=record_id,
+            first_author=first_author,
+        )
+        evidence = {key: value for key, value in selection.items() if key != "candidate"}
+        candidate = selection.get("candidate")
+        if not selection.get("selected") or not isinstance(candidate, dict):
+            return {
+                **evidence,
+                "clicked": False,
+                "result_found": bool(selection.get("title_candidate_count")),
+            }
+        raw = page.evaluate(
+            """(selection) => {
+              const norm = (s) => String(s || "").replace(/\\s+/g, "").toLowerCase();
+              const authorNorm = (s) => [...String(s || "").toLowerCase()].filter((c) => /[\\p{L}]/u.test(c)).join("");
+              const links = [...document.querySelectorAll('a[href]')];
+              const a = links.find((node) => node.getAttribute('data-inst-cnki-candidate-id') === selection.candidate_id);
+              if (!a) return { clicked: false, result_found: false, reason: "candidate_changed" };
+              const href = a.href || "";
+              const title = (a.innerText || a.title || "").replace(/\\s+/g, " ").trim();
+              const row = a.closest('tr,li,.result-item,.result,.list-item,.search-result,dd') || a.parentElement;
+              const rowText = String(row?.innerText || title).replace(/\\s+/g, " ").trim();
+              const recordMatches = selection.method !== "record_id" || href.toUpperCase().includes(selection.record_id);
+              const titleMatches = selection.method === "record_id" || norm(title) === selection.expected;
+              const authorMatches = selection.method !== "first_author" || authorNorm(rowText).includes(selection.first_author);
+              if (href !== selection.href || !recordMatches || !titleMatches || !authorMatches) {
+                return { clicked: false, result_found: false, reason: "candidate_changed" };
+              }
+              a.target = "_self";
+              a.click();
+              return { clicked: true, result_found: true, href, text: title, row_text: rowText };
+            }""",
+            {
+                "candidate_id": str(candidate.get("candidate_id") or ""),
+                "href": str(candidate.get("href") or ""),
+                "method": str(selection.get("selection_method") or ""),
+                "record_id": stable_id,
+                "expected": expected,
+                "first_author": normalized_author,
+            },
+        )
+        return {**evidence, **dict(candidate), **dict(raw or {})}
     except Exception as exc:
         return {"clicked": False, "result_found": False, "error": f"{type(exc).__name__}: {exc}"}
 
@@ -261,6 +379,7 @@ def navigate_cnki_article_via_search(
     title: str,
     fallback_url: str = "",
     record_id: str = "",
+    first_author: str = "",
     search_entry_url: str = CNKI_SEARCH_URL,
     timeout_ms: int = 60_000,
     settle_seconds: float = 2.0,
@@ -270,6 +389,7 @@ def navigate_cnki_article_via_search(
     detail: dict[str, object] = {
         "requested_url": safe_page_url(fallback_url),
         "requested_title": title,
+        "requested_first_author": first_author,
         "search_entry_url": safe_page_url(search_entry_url),
         "navigation_method": "search_result_click",
         "ready": False,
@@ -307,9 +427,17 @@ def navigate_cnki_article_via_search(
             break
         time.sleep(1)
 
-    result_click = click_cnki_search_result(page, title=title, record_id=record_id)
+    result_click = click_cnki_search_result(
+        page,
+        title=title,
+        record_id=record_id,
+        first_author=first_author,
+    )
     detail["search_result"] = result_click
     if not result_click.get("clicked"):
+        if result_click.get("reason") == "ambiguous_search_result":
+            detail["session_status"] = "ambiguous_search_result"
+            return detail
         detail["fallback_used"] = bool(fallback_url)
         if fallback_url:
             fallback = navigate_cnki_article(

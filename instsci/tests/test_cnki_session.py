@@ -5,6 +5,8 @@ from urllib.parse import parse_qs, urlparse
 
 from instsci.cnki_session import (
     classify_cnki_session,
+    choose_cnki_search_candidate,
+    click_cnki_search_result,
     cnki_search_url,
     cnki_url_is_allowed,
     cnki_verification_visible,
@@ -16,6 +18,125 @@ from instsci.browser_doctor import _POWERSHELL_PROBE
 
 
 class CnkiSessionTests(TestCase):
+    def _duplicate_cnki_candidates(self) -> list[dict[str, object]]:
+        return [
+            {
+                "index": 0,
+                "candidate_id": "candidate-a",
+                "href": "https://kns.cnki.net/kcms2/article/abstract?filename=AAA",
+                "title": "同题研究",
+                "row_text": "同题研究 张三 地质学报",
+            },
+            {
+                "index": 1,
+                "candidate_id": "candidate-b",
+                "href": "https://kns.cnki.net/kcms2/article/abstract?filename=BBB",
+                "title": "同题研究",
+                "row_text": "同题研究 李四 矿物学报",
+            },
+        ]
+
+    def test_cnki_duplicate_titles_require_unique_first_author(self) -> None:
+        result = choose_cnki_search_candidate(
+            self._duplicate_cnki_candidates(),
+            title="同题研究",
+            first_author="李四",
+        )
+
+        self.assertTrue(result["selected"])
+        self.assertEqual(result["candidate"]["index"], 1)
+        self.assertEqual(result["selection_method"], "first_author")
+        self.assertEqual(result["title_candidate_count"], 2)
+        self.assertEqual(result["author_match_count"], 1)
+        self.assertTrue(result["author_disambiguation_used"])
+
+    def test_cnki_duplicate_titles_without_author_are_ambiguous(self) -> None:
+        result = choose_cnki_search_candidate(self._duplicate_cnki_candidates(), title="同题研究")
+
+        self.assertFalse(result["selected"])
+        self.assertEqual(result["reason"], "ambiguous_search_result")
+        self.assertEqual(result["title_candidate_count"], 2)
+
+    def test_cnki_duplicate_titles_with_no_author_match_are_ambiguous(self) -> None:
+        result = choose_cnki_search_candidate(
+            self._duplicate_cnki_candidates(),
+            title="同题研究",
+            first_author="王五",
+        )
+
+        self.assertFalse(result["selected"])
+        self.assertEqual(result["reason"], "ambiguous_search_result")
+        self.assertEqual(result["author_match_count"], 0)
+
+    def test_cnki_duplicate_titles_with_repeated_author_are_ambiguous(self) -> None:
+        candidates = self._duplicate_cnki_candidates()
+        candidates[1]["row_text"] = "同题研究 张三 矿物学报"
+
+        result = choose_cnki_search_candidate(candidates, title="同题研究", first_author="张三")
+
+        self.assertFalse(result["selected"])
+        self.assertEqual(result["author_match_count"], 2)
+
+    def test_cnki_unique_exact_title_remains_compatible_without_author(self) -> None:
+        result = choose_cnki_search_candidate(
+            [self._duplicate_cnki_candidates()[0]],
+            title="同题研究",
+        )
+
+        self.assertTrue(result["selected"])
+        self.assertEqual(result["selection_method"], "exact_title")
+        self.assertFalse(result["author_disambiguation_used"])
+
+    def test_cnki_unique_stable_id_wins_before_author(self) -> None:
+        result = choose_cnki_search_candidate(
+            self._duplicate_cnki_candidates(),
+            title="同题研究",
+            record_id="BBB",
+            first_author="不存在",
+        )
+
+        self.assertTrue(result["selected"])
+        self.assertEqual(result["candidate"]["index"], 1)
+        self.assertEqual(result["selection_method"], "record_id")
+        self.assertFalse(result["author_disambiguation_used"])
+
+    def test_click_cnki_search_result_rejects_changed_candidate_before_click(self) -> None:
+        class DriftPage:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def evaluate(self, _script: str, arg: object = None) -> object:
+                self.calls += 1
+                if self.calls == 1:
+                    return [
+                        {
+                            "index": 0,
+                            "candidate_id": "candidate-a",
+                            "href": "https://kns.cnki.net/kcms2/article/abstract?filename=AAA",
+                            "title": "同题研究",
+                            "row_text": "同题研究 张三",
+                        },
+                        {
+                            "index": 1,
+                            "candidate_id": "candidate-b",
+                            "href": "https://kns.cnki.net/kcms2/article/abstract?filename=BBB",
+                            "title": "同题研究",
+                            "row_text": "同题研究 李四",
+                        },
+                    ]
+                if isinstance(arg, dict) and arg.get("candidate_id") == "candidate-b":
+                    return {"clicked": False, "result_found": False, "reason": "candidate_changed"}
+                return {"clicked": True, "result_found": True}
+
+        result = click_cnki_search_result(
+            DriftPage(),
+            title="同题研究",
+            first_author="李四",
+        )
+
+        self.assertFalse(result["clicked"])
+        self.assertEqual(result["reason"], "candidate_changed")
+        self.assertTrue(result["author_disambiguation_used"])
     def test_cnki_verification_page_requires_user(self) -> None:
         self.assertEqual(
             classify_cnki_session("https://kns.cnki.net/verify/home?captchaType=clickWord", "安全验证"),
