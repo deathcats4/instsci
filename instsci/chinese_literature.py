@@ -6,6 +6,7 @@ browser-route readiness without claiming unverified portals can download PDFs.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -14,6 +15,88 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 def normalize_author_name(value: object) -> str:
     """Normalize an author name without guessing aliases or transliterations."""
     return "".join(character.casefold() for character in str(value or "") if character.isalpha())
+
+
+_AUTHOR_LABEL = re.compile(r"^\s*(?:作者|authors?|writers?)\s*[:：]?\s*$", re.IGNORECASE)
+_AUTHOR_PREFIX = re.compile(r"^\s*(?:作者|authors?|writers?)\s*[:：]\s*", re.IGNORECASE)
+_AUTHOR_SEPARATOR = re.compile(r"[;；、，|/]+")
+
+
+def ordered_author_names(values: Iterable[object]) -> list[str]:
+    """Extract conservatively ordered names from explicit author fields.
+
+    Only strong portal author separators are split. Ambiguous whitespace and
+    ASCII commas are kept intact so ``Smith, John`` is not rearranged and an
+    uncertain combined field fails closed instead of matching a later author.
+    """
+    authors: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw or _AUTHOR_LABEL.fullmatch(raw):
+            continue
+        raw = _AUTHOR_PREFIX.sub("", raw, count=1).strip()
+        for part in _AUTHOR_SEPARATOR.split(raw):
+            author = part.strip(" \t\r\n,，;；、|/")
+            normalized = normalize_author_name(author)
+            if not normalized or _AUTHOR_LABEL.fullmatch(author) or normalized in seen:
+                continue
+            authors.append(author)
+            seen.add(normalized)
+    return authors
+
+
+def first_author_from_result_values(values: Iterable[object]) -> str:
+    """Return only the first reliably ordered portal author, or empty."""
+    authors = ordered_author_names(values)
+    return authors[0] if authors else ""
+
+
+_SIGNATURE_STOP = re.compile(r"^(?:摘要|关键词|关键字|abstract\b|key\s*words?\b)", re.IGNORECASE)
+_SIGNATURE_METADATA = re.compile(
+    r"(?:doi\s*[:：]|收稿|基金|中图分类|文献标识|作者单位|通讯作者|"
+    r"大学|学院|研究所|实验室|医院|department|university|institute|laboratory)",
+    re.IGNORECASE,
+)
+
+
+def first_author_from_pdf_signature(text: str, *, title: str) -> str:
+    """Extract the first author from the title-adjacent first-page signature.
+
+    The function intentionally returns empty when title placement or the author
+    line is unclear. It never scans references, acknowledgements, or body text.
+    """
+    expected = re.sub(r"\s+", "", str(title or "")).casefold()
+    lines = [line.strip() for line in str(text or "").splitlines()]
+    if not expected or not lines:
+        return ""
+    signature_end = next(
+        (index for index, line in enumerate(lines) if _SIGNATURE_STOP.search(line)),
+        min(len(lines), 40),
+    )
+    title_end: int | None = None
+    for start in range(signature_end):
+        combined = ""
+        for end in range(start, min(start + 4, signature_end)):
+            combined += re.sub(r"\s+", "", lines[end]).casefold()
+            if expected in combined:
+                title_end = end
+                break
+        if title_end is not None:
+            break
+    if title_end is None:
+        return ""
+    for line in lines[title_end + 1 : min(title_end + 6, signature_end)]:
+        if not line:
+            continue
+        if _SIGNATURE_STOP.search(line):
+            return ""
+        if _SIGNATURE_METADATA.search(line) or len(line) > 240 or "。" in line:
+            continue
+        first = first_author_from_result_values([line])
+        if first:
+            return first
+    return ""
 
 
 def first_author_from_record(record: Mapping[str, object]) -> str:

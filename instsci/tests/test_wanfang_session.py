@@ -79,6 +79,36 @@ class WanfangSessionTests(TestCase):
 
         self.assertIsNone(chosen)
 
+    def test_wanfang_target_author_only_in_second_position_is_ambiguous(self) -> None:
+        html = """
+        <section class="search-results">
+          <div class="result-item">
+            <a class="title" title="同题研究">同题研究</a>
+            <span class="authors"><a href="/author/王五">王五</a>，<a href="/author/李四">李四</a></span>
+            <button class="wf-list-button">下载</button>
+          </div>
+          <div class="result-item">
+            <a class="title" title="同题研究">同题研究</a>
+            <span class="authors"><a href="/author/赵六">赵六</a>，<a href="/author/孙七">孙七</a></span>
+            <button class="wf-list-button">下载</button>
+          </div>
+        </section>
+        """
+        candidates = extract_wanfang_download_candidates_from_html(
+            html,
+            title="同题研究",
+            first_author="李四",
+        )
+
+        chosen = choose_wanfang_download_candidate(
+            candidates,
+            title="同题研究",
+            first_author="李四",
+        )
+
+        self.assertIsNone(chosen)
+        self.assertEqual(candidates[0]["row_first_author"], "王五")
+
     def test_wanfang_unique_title_remains_compatible_without_author(self) -> None:
         html = """
         <div class="result-item">
@@ -260,6 +290,8 @@ class WanfangSessionTests(TestCase):
                             "row_title": "同题研究",
                             "row_index": 0,
                             "row_author_text": "张三",
+                            "row_authors": ["张三"],
+                            "row_first_author": "张三",
                         },
                         {
                             "index": 1,
@@ -271,6 +303,8 @@ class WanfangSessionTests(TestCase):
                             "row_title": "同题研究",
                             "row_index": 1,
                             "row_author_text": "李四",
+                            "row_authors": ["李四"],
+                            "row_first_author": "李四",
                         },
                     ]
                 if isinstance(arg, dict) and arg.get("candidate_id") == "candidate-b":
@@ -339,6 +373,7 @@ class WanfangSessionTests(TestCase):
                 first_author="李四",
                 author_required=True,
                 text="同题研究 张三",
+                author_signature_text="同题研究\n张三\n摘要",
                 strict_title_match=True,
             )
             success = summarize_wanfang_capture_result(
@@ -347,6 +382,17 @@ class WanfangSessionTests(TestCase):
                 first_author="李四",
                 author_required=True,
                 text="同题研究 李四",
+                author_signature_text="同题研究\n李四\n摘要",
+                strict_title_match=True,
+            )
+
+            reference_only = summarize_wanfang_capture_result(
+                result,
+                title="同题研究",
+                first_author="李四",
+                author_required=True,
+                text="同题研究 王五 摘要内容 参考文献 李四，另一项研究",
+                author_signature_text="同题研究\n王五，张三\n某大学\n摘要",
                 strict_title_match=True,
             )
 
@@ -355,6 +401,8 @@ class WanfangSessionTests(TestCase):
         self.assertEqual(conflict["standard_status"], "pdf_candidate_conflict")
         self.assertTrue(success["author_match"])
         self.assertEqual(success["file_status"], "success")
+        self.assertFalse(reference_only["author_match"])
+        self.assertEqual(reference_only["standard_status"], "pdf_candidate_conflict")
 
     def test_wanfang_downloaded_pdf_path_ignores_empty_or_directory_paths(self) -> None:
         self.assertIsNone(wanfang_downloaded_pdf_path({}))

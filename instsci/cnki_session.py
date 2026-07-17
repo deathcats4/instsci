@@ -17,6 +17,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from .chinese_literature import (
     classify_chinese_literature_page,
     first_author_from_record,
+    first_author_from_result_values,
     get_chinese_literature_portal,
     normalize_author_name,
 )
@@ -32,6 +33,10 @@ CNKI_VISIBLE_VERIFICATION_MARKERS = CNKI_PORTAL.verification_markers
 CNKI_TITLE_VERIFICATION_MARKERS = (
     "安全验证",
     "人机验证",
+)
+CNKI_RESULT_AUTHOR_SELECTOR = (
+    "a[href*='author'],a[href*='Author'],a[href*='writer'],a[href*='Writer'],"
+    ".author,.authors,.writer,[class*='author'],[class*='writer']"
 )
 
 
@@ -239,7 +244,7 @@ def choose_cnki_search_candidate(
     if stable_id:
         stable_matches = [
             dict(candidate)
-            for candidate in candidates
+            for candidate in exact_title
             if stable_id in str(candidate.get("href") or "").upper()
         ]
         if len(stable_matches) == 1:
@@ -268,10 +273,18 @@ def choose_cnki_search_candidate(
     base["author_disambiguation_used"] = True
     if not normalized_author:
         return base
+
+    def candidate_first_author(candidate: dict[str, object]) -> str:
+        explicit = str(candidate.get("row_first_author") or "").strip()
+        if explicit:
+            return explicit
+        values = candidate.get("row_authors")
+        return first_author_from_result_values(values) if isinstance(values, list) else ""
+
     author_matches = [
         candidate
         for candidate in exact_title
-        if normalized_author in normalize_author_name(candidate.get("row_text"))
+        if normalized_author == normalize_author_name(candidate_first_author(candidate))
     ]
     base["author_match_count"] = len(author_matches)
     if len(author_matches) == 1:
@@ -299,8 +312,30 @@ def click_cnki_search_result(
     normalized_author = normalize_author_name(first_author)
     try:
         raw_candidates = page.evaluate(
-            """() => {
+            """(authorSelector) => {
               const links = [...document.querySelectorAll('a[href]')];
+              const authorValues = (row) => {
+                if (!row) return [];
+                const preferred = [...row.querySelectorAll(
+                  'a[href*="author"],a[href*="Author"],a[href*="writer"],a[href*="Writer"]'
+                )];
+                const nodes = preferred.length ? preferred : [...row.querySelectorAll(authorSelector)];
+                return nodes.map((node) => String(node.innerText || node.title || "").trim()).filter(Boolean);
+              };
+              const orderedAuthors = (values) => {
+                const seen = new Set();
+                const result = [];
+                for (const value of values) {
+                  const cleaned = String(value || "").replace(/^\\s*(?:作者|authors?|writers?)\\s*[:：]\\s*/i, "").trim();
+                  if (!cleaned || /^(?:作者|authors?|writers?)\\s*[:：]?$/i.test(cleaned)) continue;
+                  for (const part of cleaned.split(/[;；、，|\\/]+/)) {
+                    const author = part.replace(/^[\\s,，;；、|\\/]+|[\\s,，;；、|\\/]+$/g, "");
+                    const key = [...author.toLowerCase()].filter((c) => /[\\p{L}]/u.test(c)).join("");
+                    if (key && !seen.has(key)) { seen.add(key); result.push(author); }
+                  }
+                }
+                return result;
+              };
               return links.map((a, index) => {
                 const href = a.href || "";
                 const title = (a.innerText || a.title || "").replace(/\\s+/g, " ").trim();
@@ -313,15 +348,19 @@ def click_cnki_search_result(
                 const row = a.closest('tr,li,.result-item,.result,.list-item,.search-result,dd') || a.parentElement;
                 const candidateId = `instsci-cnki-${Date.now()}-${Math.random().toString(36).slice(2)}-${index}`;
                 a.setAttribute('data-inst-cnki-candidate-id', candidateId);
+                const rowAuthors = orderedAuthors(authorValues(row));
                 return {
                   index,
                   candidate_id: candidateId,
                   href,
                   title,
                   row_text: String(row?.innerText || title).replace(/\\s+/g, " ").trim(),
+                  row_authors: rowAuthors,
+                  row_first_author: rowAuthors[0] || "",
                 };
               }).filter(Boolean);
-            }"""
+            }""",
+            CNKI_RESULT_AUTHOR_SELECTOR,
         )
         candidates = [dict(candidate) for candidate in (raw_candidates or [])]
         selection = choose_cnki_search_candidate(
@@ -342,6 +381,22 @@ def click_cnki_search_result(
             """(selection) => {
               const norm = (s) => String(s || "").replace(/\\s+/g, "").toLowerCase();
               const authorNorm = (s) => [...String(s || "").toLowerCase()].filter((c) => /[\\p{L}]/u.test(c)).join("");
+              const firstAuthor = (row) => {
+                if (!row) return "";
+                const preferred = [...row.querySelectorAll(
+                  'a[href*="author"],a[href*="Author"],a[href*="writer"],a[href*="Writer"]'
+                )];
+                const nodes = preferred.length ? preferred : [...row.querySelectorAll(selection.author_selector)];
+                for (const node of nodes) {
+                  const cleaned = String(node.innerText || node.title || "")
+                    .replace(/^\\s*(?:作者|authors?|writers?)\\s*[:：]\\s*/i, "").trim();
+                  if (!cleaned || /^(?:作者|authors?|writers?)\\s*[:：]?$/i.test(cleaned)) continue;
+                  const first = cleaned.split(/[;；、，|\\/]+/)[0]
+                    .replace(/^[\\s,，;；、|\\/]+|[\\s,，;；、|\\/]+$/g, "");
+                  if (authorNorm(first)) return first;
+                }
+                return "";
+              };
               const links = [...document.querySelectorAll('a[href]')];
               const a = links.find((node) => node.getAttribute('data-inst-cnki-candidate-id') === selection.candidate_id);
               if (!a) return { clicked: false, result_found: false, reason: "candidate_changed" };
@@ -349,15 +404,16 @@ def click_cnki_search_result(
               const title = (a.innerText || a.title || "").replace(/\\s+/g, " ").trim();
               const row = a.closest('tr,li,.result-item,.result,.list-item,.search-result,dd') || a.parentElement;
               const rowText = String(row?.innerText || title).replace(/\\s+/g, " ").trim();
+              const rowFirstAuthor = firstAuthor(row);
               const recordMatches = selection.method !== "record_id" || href.toUpperCase().includes(selection.record_id);
-              const titleMatches = selection.method === "record_id" || norm(title) === selection.expected;
-              const authorMatches = selection.method !== "first_author" || authorNorm(rowText).includes(selection.first_author);
+              const titleMatches = norm(title) === selection.expected;
+              const authorMatches = selection.method !== "first_author" || authorNorm(rowFirstAuthor) === selection.first_author;
               if (href !== selection.href || !recordMatches || !titleMatches || !authorMatches) {
                 return { clicked: false, result_found: false, reason: "candidate_changed" };
               }
               a.target = "_self";
               a.click();
-              return { clicked: true, result_found: true, href, text: title, row_text: rowText };
+              return { clicked: true, result_found: true, href, text: title, row_text: rowText, row_first_author: rowFirstAuthor };
             }""",
             {
                 "candidate_id": str(candidate.get("candidate_id") or ""),
@@ -366,6 +422,7 @@ def click_cnki_search_result(
                 "record_id": stable_id,
                 "expected": expected,
                 "first_author": normalized_author,
+                "author_selector": CNKI_RESULT_AUTHOR_SELECTOR,
             },
         )
         return {**evidence, **dict(candidate), **dict(raw or {})}

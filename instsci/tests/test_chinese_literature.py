@@ -5,11 +5,14 @@ from instsci.chinese_literature import (
     build_chinese_literature_search_url,
     chinese_literature_portal_report,
     chinese_literature_session_domains,
+    first_author_from_pdf_signature,
     first_author_from_record,
+    first_author_from_result_values,
     get_chinese_literature_portal,
     infer_chinese_literature_portal,
     list_chinese_literature_portals,
     normalize_author_name,
+    ordered_author_names,
 )
 
 
@@ -38,6 +41,29 @@ class ChineseLiteraturePortalTests(unittest.TestCase):
 
     def test_normalize_author_name_removes_spacing_and_footnotes(self):
         self.assertEqual(normalize_author_name(" Smith, John1* "), "smithjohn")
+
+    def test_ordered_author_names_preserves_order_and_comma_formatted_name(self):
+        self.assertEqual(ordered_author_names(["王五，李四，张三"]), ["王五", "李四", "张三"])
+        self.assertEqual(ordered_author_names(["Smith, John"]), ["Smith, John"])
+
+    def test_result_author_uses_only_first_ordered_author(self):
+        self.assertEqual(first_author_from_result_values(["王五；李四；张三"]), "王五")
+
+    def test_pdf_signature_uses_title_adjacent_first_author(self):
+        text = "同题研究\n王五，李四，张三\n某大学地质学院\n摘要：研究内容"
+
+        self.assertEqual(first_author_from_pdf_signature(text, title="同题研究"), "王五")
+
+    def test_pdf_signature_does_not_use_author_from_references(self):
+        text = "同题研究\n王五，张三\n某大学地质学院\n摘要：研究内容\n参考文献\n李四，另一项研究"
+
+        self.assertEqual(first_author_from_pdf_signature(text, title="同题研究"), "王五")
+        self.assertNotEqual(first_author_from_pdf_signature(text, title="同题研究"), "李四")
+
+    def test_pdf_signature_does_not_find_target_title_inside_first_page_references(self):
+        text = "另一篇论文\n王五\n摘要：研究内容\n参考文献\n同题研究\n李四"
+
+        self.assertEqual(first_author_from_pdf_signature(text, title="同题研究"), "")
 
     def test_catalog_includes_common_chinese_literature_portals(self):
         keys = {portal.key for portal in list_chinese_literature_portals()}

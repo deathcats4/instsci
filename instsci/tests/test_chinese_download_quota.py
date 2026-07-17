@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,6 +8,8 @@ from unittest import TestCase
 from instsci.chinese_download_quota import (
     DAILY_DOWNLOAD_LIMIT,
     ChineseDownloadQuotaError,
+    inspect_chinese_download_quota,
+    repair_chinese_download_quota_lock,
     reserve_chinese_download,
 )
 
@@ -130,6 +133,46 @@ class ChineseDownloadQuotaTests(TestCase):
                 now=self.now,
                 lock_timeout=0.05,
             )
+
+    def test_status_reports_used_remaining_and_no_lock(self) -> None:
+        self.reserve("cnki", "one")
+
+        status = inspect_chinese_download_quota(self.ledger, now=self.now)
+
+        self.assertEqual(status["used"], 1)
+        self.assertEqual(status["remaining"], 99)
+        self.assertFalse(status["lock_exists"])
+        self.assertFalse(status["stale_lock"])
+
+    def test_repair_removes_only_a_stale_pid_lock(self) -> None:
+        lock_path = self.ledger.with_suffix(self.ledger.suffix + ".lock")
+        lock_path.write_text("pid=2147483647\n", encoding="ascii")
+
+        status = inspect_chinese_download_quota(self.ledger, now=self.now)
+        repaired = repair_chinese_download_quota_lock(self.ledger)
+
+        self.assertTrue(status["stale_lock"])
+        self.assertTrue(status["repairable"])
+        self.assertTrue(repaired["removed"])
+        self.assertFalse(lock_path.exists())
+
+    def test_repair_refuses_a_live_pid_lock(self) -> None:
+        lock_path = self.ledger.with_suffix(self.ledger.suffix + ".lock")
+        lock_path.write_text(f"pid={os.getpid()}\n", encoding="ascii")
+
+        with self.assertRaisesRegex(ChineseDownloadQuotaError, "active process"):
+            repair_chinese_download_quota_lock(self.ledger)
+
+        self.assertTrue(lock_path.exists())
+
+    def test_repair_refuses_an_unparseable_lock(self) -> None:
+        lock_path = self.ledger.with_suffix(self.ledger.suffix + ".lock")
+        lock_path.write_text("unknown owner\n", encoding="ascii")
+
+        with self.assertRaisesRegex(ChineseDownloadQuotaError, "invalid quota lock"):
+            repair_chinese_download_quota_lock(self.ledger)
+
+        self.assertTrue(lock_path.exists())
 
 
 if __name__ == "__main__":

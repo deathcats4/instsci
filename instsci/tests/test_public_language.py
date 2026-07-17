@@ -129,6 +129,14 @@ class PublicLanguageTests(unittest.TestCase):
         self.assertIn("--verification-", output)
         self.assertIn("policy: stop or", output)
 
+    def test_chinese_quota_help_exposes_safe_status_and_repair(self):
+        result = self.runner.invoke(app, ["chinese-quota", "--help"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("status", result.output)
+        self.assertIn("repair", result.output)
+        self.assertIn("stale", result.output.lower())
+
     def test_agents_requires_builtin_browser_for_publisher_pdf_verdicts(self):
         text = Path("AGENTS.md").read_text(encoding="utf-8")
 
@@ -296,6 +304,10 @@ class PublicLanguageTests(unittest.TestCase):
             text,
         )
         self.assertRegex(text, r"Failures\s+and retries\s+count")
+        self.assertIn("record_id never overrides an exact-title mismatch", text)
+        self.assertIn("first-page signature", text)
+        self.assertIn("instsci chinese-quota status", text)
+        self.assertIn("instsci chinese-quota repair", text)
 
     def test_inst_sci_skill_documents_chinese_author_and_quota_guards(self):
         text = Path("skills/instsci/SKILL.md").read_text(encoding="utf-8")
@@ -307,6 +319,10 @@ class PublicLanguageTests(unittest.TestCase):
             text,
         )
         self.assertRegex(text, r"Failures\s+and retries\s+count")
+        self.assertIn("record_id never overrides an exact-title mismatch", text)
+        self.assertIn("first-page signature", text)
+        self.assertIn("instsci chinese-quota status", text)
+        self.assertIn("instsci chinese-quota repair", text)
 
     def test_inst_sci_module_entrypoint_is_available(self):
         result = subprocess.run(

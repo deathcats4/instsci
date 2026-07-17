@@ -35,23 +35,26 @@ or title text is never accepted as evidence for a different row.
 
 Selection order is:
 
-1. A stable `record_id` match uniquely identifying a candidate wins.
-2. Collect result rows whose normalized title exactly matches the requested
+1. Collect result rows whose normalized title exactly matches the requested
    title.
+2. A `record_id` match may rank or select only within those exact-title rows;
+   an ID-like user label never overrides a title mismatch.
 3. If there is exactly one exact-title row, select it without requiring author
    metadata. This preserves current compatibility.
-4. If there is more than one exact-title row, require `first_author` and keep
-   only rows whose normalized row author text contains that first author.
+4. If there is more than one exact-title row, require `first_author`, extract an
+   ordered list from explicit same-row author nodes, and keep only rows whose
+   normalized first entry equals the requested first author.
 5. Select only when author filtering leaves exactly one row.
 6. If the first author is unavailable, no row matches it, or multiple rows still
    match it, do not click a download control. Return an explicit ambiguous
    result for manual review.
 
-Normalization removes whitespace and common separator or footnote punctuation
-and compares case-insensitively. It does not transliterate Chinese names or
-guess aliases. The browser code reports exact-title candidate count, matched
-first author, author-match count, whether author disambiguation was used, and
-the selected row identity.
+Normalization removes whitespace and footnote punctuation and compares
+case-insensitively. It does not transliterate Chinese names, guess aliases, or
+search the full result-row text. Strong author separators preserve order;
+ambiguous author containers fail closed. The browser code reports exact-title
+candidate count, extracted first author, author-match count, whether author
+disambiguation was used, and the selected row identity.
 
 The first version evaluates loaded result rows and does not automatically walk
 pagination. If the visible portal state does not provide a unique candidate,
@@ -63,8 +66,10 @@ Existing PDF header, size, and title checks remain mandatory.
 
 When a unique title row was selected without author disambiguation, the current
 title-based success rule remains unchanged. When author disambiguation was used,
-extracted PDF text must also contain the normalized first author. If the PDF is
-valid but the required author does not match, keep the file as
+InstSci locates the requested title on the first page, extracts the immediately
+following signature author line, and compares only its first author. Names found
+only in the body, acknowledgements, or references do not count. If the PDF is
+valid but the required first author does not match, keep the file as
 `file_status=unverified` with `standard_status=pdf_candidate_conflict`.
 
 Each manifest row records:
@@ -108,6 +113,11 @@ resets a corrupt ledger to zero. The quota applies only to downloads initiated
 by this local InstSci installation and cannot account for manual downloads or
 other devices.
 
+`instsci chinese-quota status` reports the current count, lock PID, and whether
+the lock is stale without changing state. `instsci chinese-quota repair` removes
+only a lock whose recorded PID is no longer running and whose contents did not
+change during the check. Active, changed, or unparseable locks remain untouched.
+
 ## Components
 
 ### `instsci/chinese_download_quota.py`
@@ -139,9 +149,12 @@ manifest row, and conditionally requires PDF author verification.
 README examples document `authors` and `first_author`, ambiguity behavior, and
 the shared daily limit. Unit tests cover loaders, both portal selectors, PDF
 verification, quota persistence, cross-portal aggregation, next-day reset,
-limit exhaustion, corrupt-ledger failure, and lock-safe reservations. Existing
-rows without authors and unique-title downloads remain covered as compatibility
-cases.
+limit exhaustion, corrupt-ledger failure, PID-checked stale-lock repair, and
+lock-safe reservations. Behavior tests invoke both batch commands with mocked
+browser pages and prove that ambiguity, exhaustion, and corrupt state never call
+capture; retries reserve twice; and independent commands share the ledger.
+Existing rows without authors and unique-title downloads remain covered as
+compatibility cases.
 
 ## Error Handling
 
@@ -160,8 +173,8 @@ cases.
 ## Acceptance Criteria
 
 1. Existing author-less unique-title batches remain valid.
-2. Multiple exact-title candidates are never auto-selected without a unique
-   stable ID or unique first-author match in the same result row.
+2. Multiple exact-title candidates are never auto-selected without a uniquely
+   extracted same-row first author; later coauthors never match.
 3. Author disambiguation evidence survives into the manifest and, when used,
    becomes part of final PDF identity verification.
 4. A combined 101st CNKI/Wanfang attempt on the same local date is blocked even
@@ -169,4 +182,7 @@ cases.
 5. A new local date starts with a fresh allowance without discarding prior-day
    evidence unsafely.
 6. Corrupt or unavailable quota state blocks downloads rather than resetting.
-7. No real portal download is required by the automated test suite.
+7. A `record_id` match never bypasses exact-title verification.
+8. Required PDF authors are verified only from the title-adjacent first-page
+   signature, not the whole document.
+9. No real portal download is required by the automated test suite.

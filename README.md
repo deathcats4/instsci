@@ -178,9 +178,14 @@ author:
 entry from `authors`. Only the first author is used for searching and
 disambiguation. A unique exact-title row can proceed without author metadata.
 When more than one row has the exact title, InstSci requires exactly one of
-those same result rows to match the first author. Otherwise it records
-`ambiguous_search_result` and does not click or download. If author matching was
-needed to select the row, the captured PDF must also contain the first author.
+those same result rows to expose an ordered author list whose first entry equals
+the requested first author. A later coauthor never counts, and an author field
+whose order cannot be extracted reliably is treated as ambiguous. Otherwise it
+records `ambiguous_search_result` with `result_evidence=browser_verified` and
+does not click or download. For CNKI, record_id never overrides an exact-title mismatch.
+If author matching was needed to select the row, the captured PDF must expose
+the same first author in its title-adjacent first-page signature; a name found
+only in the body, acknowledgements, or references does not pass.
 
 For CNKI search mode, each record needs `record_id` and `title`; `url` is optional and used only as a fallback. Direct mode still requires a validated CNKI URL. Single-record CNKI downloads accept `--title`; InstSci marks `file_status=success` only when extracted PDF text matches the title or record id. A valid PDF that cannot be tied to the requested record is kept as `file_status=unverified` with `standard_status=pdf_candidate_conflict`.
 
@@ -193,6 +198,15 @@ and retries count, and the 101st attempt is blocked with
 installation and local calendar day; it cannot count manual downloads or runs
 on other machines. Ledger corruption or an unavailable ledger fails closed as
 `quota_state_error` instead of allowing an uncounted download.
+
+Inspect the local count and lock owner without changing state. A repair removes
+only a lock whose recorded PID is no longer running; it refuses active or
+unparseable locks:
+
+```powershell
+instsci chinese-quota status
+instsci chinese-quota repair
+```
 
 Zotero sync also supports Chinese records without DOI: when a successful row has `zotero_item_key` and a PDF, `instsci zotero handoff` creates an `attachment_only` action and `instsci zotero sync` links the PDF to the existing Zotero item.
 ## Zotero

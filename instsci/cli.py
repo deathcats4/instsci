@@ -26,7 +26,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import Config
-from .chinese_literature import normalize_author_name
+from .chinese_literature import first_author_from_pdf_signature, normalize_author_name
 from .fetcher import PaperFetcher
 from . import multi_search
 from .publisher_matrix import manifest_next_action, manifest_suggested_paths, normalize_suggested_paths
@@ -50,6 +50,11 @@ zotero_app = typer.Typer(help="Prepare Zotero MCP import handoffs.", no_args_is_
 app.add_typer(zotero_app, name="zotero")
 evidence_app = typer.Typer(help="Manage the external private-evidence index.", no_args_is_help=True)
 app.add_typer(evidence_app, name="evidence")
+chinese_quota_app = typer.Typer(
+    help="Inspect the shared CNKI/Wanfang daily quota and safely repair a stale PID lock.",
+    no_args_is_help=True,
+)
+app.add_typer(chinese_quota_app, name="chinese-quota")
 console = Console()
 
 
@@ -85,22 +90,84 @@ def _chinese_quota_ledger_path(config: Config) -> Path:
     return Path(config.cache_dir).expanduser() / "chinese_download_quota.json"
 
 
+@chinese_quota_app.command("status")
+def chinese_quota_status(
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+):
+    """Show today's shared attempt count and quota-lock health without changing state."""
+    from .chinese_download_quota import inspect_chinese_download_quota
+
+    status = inspect_chinese_download_quota(_chinese_quota_ledger_path(Config.load()))
+    if json_output:
+        console.print_json(data=status)
+    else:
+        table = Table(title="Chinese Download Quota")
+        table.add_column("Field")
+        table.add_column("Value")
+        for field in (
+            "date",
+            "used",
+            "limit",
+            "remaining",
+            "ledger_valid",
+            "lock_exists",
+            "lock_pid",
+            "lock_pid_running",
+            "stale_lock",
+            "repairable",
+        ):
+            table.add_row(field, str(status.get(field)))
+        console.print(table)
+        if status.get("ledger_error"):
+            console.print(f"[red]{status['ledger_error']}[/red]")
+        if status.get("lock_error"):
+            console.print(f"[red]{status['lock_error']}[/red]")
+    if not status.get("ledger_valid") or status.get("lock_error"):
+        raise typer.Exit(2)
+
+
+@chinese_quota_app.command("repair")
+def chinese_quota_repair(
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+):
+    """Remove only a stale lock whose recorded PID is no longer running."""
+    from .chinese_download_quota import ChineseDownloadQuotaError, repair_chinese_download_quota_lock
+
+    try:
+        result = repair_chinese_download_quota_lock(_chinese_quota_ledger_path(Config.load()))
+    except ChineseDownloadQuotaError as exc:
+        if json_output:
+            console.print_json(data={"removed": False, "error": str(exc)})
+        else:
+            console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2)
+    if json_output:
+        console.print_json(data=result)
+    elif result.get("removed"):
+        console.print("[green]Removed the verified stale Chinese quota lock.[/green]")
+    else:
+        console.print("[green]No Chinese quota lock is present; nothing changed.[/green]")
+
+
 def _verify_chinese_pdf_identity(
     title: str,
     first_author: str,
     text: str,
     *,
     author_required: bool,
-) -> dict[str, bool]:
+    author_signature_text: str = "",
+) -> dict[str, object]:
     """Verify title and, after author disambiguation, first-author identity."""
     compact_text = "".join(str(text or "").split()).casefold()
     compact_title = "".join(str(title or "").split()).casefold()
     normalized_author = normalize_author_name(first_author)
-    author_match = bool(normalized_author and normalized_author in normalize_author_name(text))
+    pdf_first_author = first_author_from_pdf_signature(author_signature_text, title=title)
+    author_match = bool(normalized_author and normalized_author == normalize_author_name(pdf_first_author))
     title_match = bool(compact_title and compact_title in compact_text)
     return {
         "title_match": title_match,
         "author_match": author_match,
+        "pdf_first_author": pdf_first_author,
         "verified": title_match and (author_match or not author_required),
     }
 
@@ -1859,6 +1926,7 @@ def cnki_batch(
                     row.update(
                         {
                             "standard_status": "ambiguous_search_result",
+                            "result_evidence": "browser_verified",
                             "next_action": "inspect_visible_search_results_and_select_manually",
                             "evidence": str(failure),
                         }
@@ -1941,6 +2009,7 @@ def cnki_batch(
                     row.update(
                         {
                             "standard_status": "ambiguous_search_result",
+                            "result_evidence": "browser_verified",
                             "next_action": "inspect_visible_search_results_and_select_manually",
                             "evidence": str(failure),
                             "title_candidate_count": effective_search_result.get("title_candidate_count", 0),
@@ -2049,11 +2118,15 @@ def cnki_batch(
                 page.screenshot(path=str(after), full_page=False)
                 pdf_path = Path(str(result.get("pdf_path") or ""))
                 text = pdf_extractor.extract_text(pdf_path) if pdf_path.exists() else ""
+                author_signature_text = (
+                    pdf_extractor.extract_first_page_text(pdf_path) if pdf_path.exists() else ""
+                )
                 identity = _verify_chinese_pdf_identity(
                     title,
                     first_author,
                     text,
                     author_required=bool(row.get("author_disambiguation_used")),
+                    author_signature_text=author_signature_text,
                 )
                 title_match = identity["title_match"]
                 author_match = identity["author_match"]
@@ -2074,6 +2147,7 @@ def cnki_batch(
                         "article_url": safe_page_url(str(getattr(page, "url", "") or "")),
                         "title_match": title_match,
                         "author_match": author_match,
+                        "pdf_first_author": identity["pdf_first_author"],
                         "text_length": len(text),
                         "file_status": "success" if verified else ("unverified" if valid_pdf else "missing"),
                         "standard_status": standard_status,
@@ -2312,6 +2386,7 @@ def wanfang_batch(
                                 if reason == "ambiguous_search_result"
                                 else "capture_failed"
                             ),
+                            "result_evidence": "browser_verified",
                             "next_action": (
                                 "inspect_visible_search_results_and_select_manually"
                                 if reason == "ambiguous_search_result"
@@ -2421,12 +2496,14 @@ def wanfang_batch(
                 row["after_screenshots"] = screenshot_pages(item_evidence, "after_download")
                 pdf_path = wanfang_downloaded_pdf_path(result)
                 text = pdf_extractor.extract_text(pdf_path) if pdf_path else ""
+                author_signature_text = pdf_extractor.extract_first_page_text(pdf_path) if pdf_path else ""
                 capture_summary = summarize_wanfang_capture_result(
                     result,
                     title=title,
                     first_author=first_author,
                     author_required=bool(selection.get("author_disambiguation_used")),
                     text=text,
+                    author_signature_text=author_signature_text,
                     strict_title_match=strict_title_match,
                     pdf_path=pdf_path,
                 )
@@ -2435,6 +2512,7 @@ def wanfang_batch(
                         "article_url": safe_wanfang_url(str(getattr(page, "url", "") or "")),
                         "title_match": capture_summary["title_match"],
                         "author_match": capture_summary["author_match"],
+                        "pdf_first_author": capture_summary["pdf_first_author"],
                         "text_length": capture_summary["text_length"],
                         "file_status": capture_summary["file_status"],
                         "standard_status": capture_summary["standard_status"],

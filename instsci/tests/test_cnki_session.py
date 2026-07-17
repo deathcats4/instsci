@@ -26,6 +26,8 @@ class CnkiSessionTests(TestCase):
                 "href": "https://kns.cnki.net/kcms2/article/abstract?filename=AAA",
                 "title": "同题研究",
                 "row_text": "同题研究 张三 地质学报",
+                "row_authors": ["张三"],
+                "row_first_author": "张三",
             },
             {
                 "index": 1,
@@ -33,6 +35,8 @@ class CnkiSessionTests(TestCase):
                 "href": "https://kns.cnki.net/kcms2/article/abstract?filename=BBB",
                 "title": "同题研究",
                 "row_text": "同题研究 李四 矿物学报",
+                "row_authors": ["李四"],
+                "row_first_author": "李四",
             },
         ]
 
@@ -71,11 +75,46 @@ class CnkiSessionTests(TestCase):
     def test_cnki_duplicate_titles_with_repeated_author_are_ambiguous(self) -> None:
         candidates = self._duplicate_cnki_candidates()
         candidates[1]["row_text"] = "同题研究 张三 矿物学报"
+        candidates[1]["row_authors"] = ["张三"]
+        candidates[1]["row_first_author"] = "张三"
 
         result = choose_cnki_search_candidate(candidates, title="同题研究", first_author="张三")
 
         self.assertFalse(result["selected"])
         self.assertEqual(result["author_match_count"], 2)
+
+    def test_cnki_target_author_only_in_second_position_is_ambiguous(self) -> None:
+        candidates = self._duplicate_cnki_candidates()
+        candidates[0].update(
+            {
+                "row_text": "同题研究 王五，李四，张三 地质学报",
+                "row_authors": ["王五", "李四", "张三"],
+                "row_first_author": "王五",
+            }
+        )
+        candidates[1].update(
+            {
+                "row_text": "同题研究 赵六，孙七 矿物学报",
+                "row_authors": ["赵六", "孙七"],
+                "row_first_author": "赵六",
+            }
+        )
+
+        result = choose_cnki_search_candidate(candidates, title="同题研究", first_author="李四")
+
+        self.assertFalse(result["selected"])
+        self.assertEqual(result["reason"], "ambiguous_search_result")
+        self.assertEqual(result["author_match_count"], 0)
+
+    def test_cnki_duplicate_titles_without_reliable_first_author_are_ambiguous(self) -> None:
+        candidates = self._duplicate_cnki_candidates()
+        candidates[0].update({"row_text": "同题研究 李四 地质学报", "row_authors": [], "row_first_author": ""})
+        candidates[1].update({"row_text": "同题研究 王五 矿物学报", "row_authors": [], "row_first_author": ""})
+
+        result = choose_cnki_search_candidate(candidates, title="同题研究", first_author="李四")
+
+        self.assertFalse(result["selected"])
+        self.assertEqual(result["reason"], "ambiguous_search_result")
 
     def test_cnki_unique_exact_title_remains_compatible_without_author(self) -> None:
         result = choose_cnki_search_candidate(
@@ -100,6 +139,26 @@ class CnkiSessionTests(TestCase):
         self.assertEqual(result["selection_method"], "record_id")
         self.assertFalse(result["author_disambiguation_used"])
 
+    def test_cnki_record_id_match_cannot_bypass_exact_title(self) -> None:
+        result = choose_cnki_search_candidate(
+            [
+                {
+                    "index": 0,
+                    "candidate_id": "candidate-wrong-title",
+                    "href": "https://kns.cnki.net/kcms2/article/abstract?filename=cnki-1",
+                    "title": "另一篇论文",
+                    "row_text": "另一篇论文 张三",
+                    "row_authors": ["张三"],
+                    "row_first_author": "张三",
+                }
+            ],
+            title="请求的论文题名",
+            record_id="cnki-1",
+        )
+
+        self.assertFalse(result["selected"])
+        self.assertEqual(result["reason"], "no_exact_title_result")
+
     def test_click_cnki_search_result_rejects_changed_candidate_before_click(self) -> None:
         class DriftPage:
             def __init__(self) -> None:
@@ -115,6 +174,8 @@ class CnkiSessionTests(TestCase):
                             "href": "https://kns.cnki.net/kcms2/article/abstract?filename=AAA",
                             "title": "同题研究",
                             "row_text": "同题研究 张三",
+                            "row_authors": ["张三"],
+                            "row_first_author": "张三",
                         },
                         {
                             "index": 1,
@@ -122,6 +183,8 @@ class CnkiSessionTests(TestCase):
                             "href": "https://kns.cnki.net/kcms2/article/abstract?filename=BBB",
                             "title": "同题研究",
                             "row_text": "同题研究 李四",
+                            "row_authors": ["李四"],
+                            "row_first_author": "李四",
                         },
                     ]
                 if isinstance(arg, dict) and arg.get("candidate_id") == "candidate-b":

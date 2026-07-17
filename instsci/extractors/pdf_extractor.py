@@ -49,6 +49,25 @@ def extract_text(pdf_path: str | Path) -> str:
     return full_text
 
 
+def extract_first_page_text(pdf_path: str | Path) -> str:
+    """Extract raw first-page text while preserving signature line order."""
+    path = Path(pdf_path)
+    if not path.exists():
+        logger.error("PDF file not found: %s", path)
+        return ""
+    try:
+        doc = pymupdf.open(str(path))
+    except Exception as exc:
+        logger.error("Failed to open PDF %s: %s", path, exc)
+        return ""
+    try:
+        if not doc.page_count:
+            return ""
+        return str(doc[0].get_text("text") or "").strip()
+    finally:
+        doc.close()
+
+
 def extract_figures(pdf_path: str | Path) -> list[str]:
     """Extract figure captions from a PDF file.
 

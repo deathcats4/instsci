@@ -162,16 +162,22 @@ instsci chinese-literature-sites
 - Batch records may supply `first_author` or an ordered `authors` list;
   `first_author` takes precedence. Only the first author is used for searching
   and disambiguation. If an exact title appears in more than one result row,
-  require exactly one same-row first-author match. Otherwise record
-  `ambiguous_search_result` and do not click or download. When author matching
-  selects the result, require the captured PDF text to match both title and
-  first author.
+  extract an ordered author list from explicit same-row author nodes and compare
+  only its first entry. A later coauthor never counts; if order is unreliable,
+  record `ambiguous_search_result` with `result_evidence=browser_verified` and
+  do not click or download. For CNKI, record_id never overrides an exact-title mismatch.
+  When author matching selects the result, require the same author in the
+  title-adjacent first-page signature; body, acknowledgement, and reference
+  occurrences do not count.
 - CNKI and Wanfang share one local daily limit of 100 download attempts.
   Reserve immediately before every browser download action. Failures and retries
   count; stop at `daily_limit_reached`. Treat a missing, locked, corrupt, or
   unwritable quota ledger as `quota_state_error` and fail closed. This ledger
   covers only InstSci activity on the current local installation, not manual
   downloads or other machines.
+  Use `instsci chinese-quota status` to inspect count and lock ownership. Use
+  `instsci chinese-quota repair` only for its PID-checked stale-lock repair; it
+  must refuse active or unparseable locks.
 - CNKI is the primary Chinese full-text route: use the persistent CNKI profile
   and the search-first batch path (`instsci cnki-batch ... --navigation-mode search`).
   In search mode, records need `record_id` and `title`; `url` is optional and

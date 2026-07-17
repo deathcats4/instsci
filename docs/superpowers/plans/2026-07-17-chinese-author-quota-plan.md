@@ -13,8 +13,9 @@
 - CNKI and Wanfang share one local-calendar-day limit of exactly 100 download attempts.
 - Failed attempts and retries consume quota; ambiguous candidates blocked before capture do not.
 - Existing author-less rows remain valid when an exact title identifies one loaded result row.
-- Duplicate exact-title rows require one unique first-author match in the same result row unless a stable record ID uniquely matches.
-- If author disambiguation was required, downloaded PDF text must match both title and first author.
+- Duplicate exact-title rows require one uniquely extracted same-row first author; later coauthors never match.
+- A record ID may select only among exact-title rows and never overrides a title mismatch.
+- If author disambiguation was required, the PDF title-adjacent first-page signature must have the same first author.
 - Corrupt, locked, or unwritable quota state fails closed and performs no download.
 - Automated tests must not call a live portal or start a browser.
 - Preserve the visible-browser CAPTCHA/SSO workflow and do not add parallel portal tabs.
@@ -169,7 +170,7 @@ Implement the pure selector with this result contract:
 }
 ```
 
-Refactor the first browser evaluation to collect safe dictionaries containing `candidate_id`, `href`, `title`, and same-row `row_text` without clicking. Use the pure selector, then run a second evaluation that finds the marked candidate, recomputes its href/title/row text, rejects drift as `candidate_changed`, and clicks only after the selected identity still matches. Pass `first_author` through `navigate_cnki_article_via_search` and include the selection evidence under `search_result`.
+Refactor the first browser evaluation to collect safe dictionaries containing `candidate_id`, `href`, `title`, and ordered same-row `row_authors` without clicking. Use the pure selector, then run a second evaluation that finds the marked candidate, recomputes its href/title/first author, rejects drift as `candidate_changed`, and clicks only after the selected identity still matches. Require exact title even when `record_id` matches. Pass `first_author` through `navigate_cnki_article_via_search` and include the selection evidence under `search_result`.
 
 Do not use the direct URL fallback when `reason == "ambiguous_search_result"`; an ambiguous search must remain blocked.
 
@@ -228,7 +229,7 @@ Add a conservative result-author selector covering common author containers and 
 WANFANG_RESULT_AUTHOR_SELECTOR = ".author,.authors,.writer,[class*='author'],[class*='writer']"
 ```
 
-For fixture extraction and browser evaluation, store `row_author_text` from the same result-row container. Count distinct exact-title rows, not download controls. When more than one exact-title row exists, require exactly one normalized first-author containment match. Add selection evidence to the chosen candidate.
+For fixture extraction and browser evaluation, store ordered `row_authors` and `row_first_author` from explicit author nodes in the same result-row container. Count distinct exact-title rows, not download controls. When more than one exact-title row exists, require exactly one normalized equality match against `row_first_author`; containment across all authors is forbidden. Add selection evidence to the chosen candidate.
 
 Split inspection from click: `inspect_wanfang_result_download` collects and chooses without mutation; `click_wanfang_result_download` accepts the inspected selection and revalidates title, author, href, label, and candidate ID before clicking. Preserve the old call shape by inspecting internally when `selection` is omitted.
 
@@ -326,7 +327,7 @@ git commit -m "feat: enforce shared Chinese download quota"
 **Interfaces:**
 - Adds standard statuses: `ambiguous_search_result`, `daily_limit_reached`, `quota_state_error`.
 - Produces: `_chinese_quota_ledger_path(config: Config) -> Path`.
-- Produces: `_verify_chinese_pdf_identity(title, first_author, text, *, author_required) -> dict[str, bool]`.
+- Produces: `_verify_chinese_pdf_identity(title, first_author, text, *, author_required, author_signature_text) -> dict[str, object]`.
 - Consumes: portal selection evidence and `reserve_chinese_download()`.
 
 - [ ] **Step 1: Write failing PDF/status/quota-integration tests**
@@ -339,7 +340,7 @@ self.assertEqual(manifest_next_action("daily_limit_reached"), "stop_batch_and_re
 self.assertEqual(manifest_next_action("quota_state_error"), "inspect_or_repair_local_quota_state_before_retry")
 ```
 
-Add source-level integration assertions in `test_chinese_batch_safety.py` that both batch loops call `reserve_chinese_download` before their portal capture call, pass `first_author`, and handle all three statuses. These tests complement pure unit coverage without launching a browser.
+Add behavior tests that invoke both batch commands with mocked visible-browser pages. Prove capture is never called for ambiguity, exhausted quota, or corrupt quota state; a verification retry creates a second reservation; and independent CNKI/Wanfang commands share one ledger.
 
 - [ ] **Step 2: Run focused tests and verify RED**
 
@@ -359,7 +360,7 @@ Add the three statuses to `STANDARD_STATUSES`. Add suggested paths:
 "quota_state_error": ["inspect_local_state", "stop_batch"],
 ```
 
-Implement corresponding `manifest_next_action` branches. Implement PDF identity output with `title_match`, `author_match`, and `verified`; `verified` requires author only when `author_required` is true.
+Implement corresponding `manifest_next_action` branches. Implement PDF identity output with `title_match`, `pdf_first_author`, `author_match`, and `verified`; when `author_required` is true, extract only the title-adjacent first-page signature author and compare its first entry.
 
 - [ ] **Step 4: Integrate CNKI batch safety**
 
