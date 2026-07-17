@@ -5,13 +5,40 @@ from instsci.chinese_literature import (
     build_chinese_literature_search_url,
     chinese_literature_portal_report,
     chinese_literature_session_domains,
+    first_author_from_record,
     get_chinese_literature_portal,
     infer_chinese_literature_portal,
     list_chinese_literature_portals,
+    normalize_author_name,
 )
 
 
 class ChineseLiteraturePortalTests(unittest.TestCase):
+    def test_first_author_prefers_explicit_value(self):
+        self.assertEqual(
+            first_author_from_record({"first_author": "张三", "authors": ["李四", "王五"]}),
+            "张三",
+        )
+
+    def test_first_author_uses_first_nonempty_ordered_author(self):
+        self.assertEqual(
+            first_author_from_record({"authors": ["", "Smith, John", "李四"]}),
+            "Smith, John",
+        )
+
+    def test_first_author_keeps_comma_formatted_name_intact(self):
+        self.assertEqual(first_author_from_record({"authors": ["Smith, John"]}), "Smith, John")
+
+    def test_first_author_allows_missing_author_metadata(self):
+        self.assertEqual(first_author_from_record({"title": "测试"}), "")
+
+    def test_first_author_rejects_non_list_authors(self):
+        with self.assertRaisesRegex(ValueError, "ordered JSON array"):
+            first_author_from_record({"authors": "张三;李四"})
+
+    def test_normalize_author_name_removes_spacing_and_footnotes(self):
+        self.assertEqual(normalize_author_name(" Smith, John1* "), "smithjohn")
+
     def test_catalog_includes_common_chinese_literature_portals(self):
         keys = {portal.key for portal in list_chinese_literature_portals()}
 

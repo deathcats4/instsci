@@ -220,6 +220,29 @@ class WanfangSessionTests(TestCase):
         self.assertEqual(rows[0]["query"], rows[0]["title"])
         self.assertEqual(rows[0]["zotero_item_key"], "JGN5J75A")
 
+    def test_load_wanfang_batch_preserves_explicit_first_author(self) -> None:
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp) / "batch.json"
+            source.write_text(
+                '[{"record_id":"safe","title":"测试题名","first_author":"张三","authors":["李四"]}]',
+                encoding="utf-8",
+            )
+
+            rows = load_wanfang_batch(source)
+
+        self.assertEqual(rows[0]["first_author"], "张三")
+
+    def test_load_wanfang_batch_reports_invalid_authors_with_row_number(self) -> None:
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp) / "batch.json"
+            source.write_text(
+                '[{"record_id":"safe","title":"测试题名","authors":"张三;李四"}]',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "Wanfang batch row 1.*ordered JSON array"):
+                load_wanfang_batch(source)
+
     def test_load_wanfang_batch_allows_explicit_query(self) -> None:
         with TemporaryDirectory() as tmp:
             source = Path(tmp) / "batch.json"

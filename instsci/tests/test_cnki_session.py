@@ -79,6 +79,29 @@ class CnkiSessionTests(TestCase):
             self.assertEqual(rows[0]["record_id"], "YKDZ202305004")
             self.assertEqual(rows[0]["zotero_item_key"], "JGN5J75A")
 
+    def test_load_cnki_batch_preserves_first_author(self) -> None:
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp) / "batch.json"
+            source.write_text(
+                '[{"record_id":"YKDZ202305004","title":"测试题名","authors":["张三","李四"]}]',
+                encoding="utf-8",
+            )
+
+            rows = load_cnki_batch(source)
+
+        self.assertEqual(rows[0]["first_author"], "张三")
+
+    def test_load_cnki_batch_reports_invalid_authors_with_row_number(self) -> None:
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp) / "batch.json"
+            source.write_text(
+                '[{"record_id":"YKDZ202305004","title":"测试题名","authors":"张三;李四"}]',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "CNKI batch row 1.*ordered JSON array"):
+                load_cnki_batch(source)
+
     def test_load_cnki_batch_search_mode_allows_missing_url(self) -> None:
         with TemporaryDirectory() as tmp:
             source = Path(tmp) / "batch.json"

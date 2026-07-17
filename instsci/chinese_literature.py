@@ -6,9 +6,27 @@ browser-route readiness without claiming unverified portals can download PDFs.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+
+def normalize_author_name(value: object) -> str:
+    """Normalize an author name without guessing aliases or transliterations."""
+    return "".join(character.casefold() for character in str(value or "") if character.isalpha())
+
+
+def first_author_from_record(record: Mapping[str, object]) -> str:
+    """Return the explicit or first ordered author from a batch record."""
+    explicit = str(record.get("first_author") or "").strip()
+    if explicit:
+        return explicit
+    authors = record.get("authors")
+    if authors is None:
+        return ""
+    if not isinstance(authors, list):
+        raise ValueError("authors must be an ordered JSON array")
+    return next((str(author).strip() for author in authors if str(author).strip()), "")
 
 
 @dataclass(frozen=True)

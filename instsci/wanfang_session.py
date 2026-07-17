@@ -13,7 +13,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from .chinese_literature import classify_chinese_literature_page, get_chinese_literature_portal
+from .chinese_literature import (
+    classify_chinese_literature_page,
+    first_author_from_record,
+    get_chinese_literature_portal,
+)
 from .cloakbrowser_compat import prepare_cloakbrowser_runtime
 from .config import Config
 
@@ -71,10 +75,15 @@ def load_wanfang_batch(path: str | Path) -> list[dict[str, str]]:
             host = (urlparse(url).hostname or "").lower()
             if not _host_matches(host, WANFANG_HOST_SUFFIXES):
                 raise ValueError(f"Wanfang batch row {index} has an invalid Wanfang URL.")
+        try:
+            first_author = first_author_from_record(raw)
+        except ValueError as exc:
+            raise ValueError(f"Wanfang batch row {index} {exc}.") from exc
         records.append(
             {
                 "record_id": record_id,
                 "title": title,
+                "first_author": first_author,
                 "query": query,
                 "url": url,
                 "zotero_item_key": str(raw.get("zotero_item_key") or "").strip(),

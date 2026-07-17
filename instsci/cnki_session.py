@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from .chinese_literature import classify_chinese_literature_page, get_chinese_literature_portal
+from .chinese_literature import (
+    classify_chinese_literature_page,
+    first_author_from_record,
+    get_chinese_literature_portal,
+)
 from .cloakbrowser_compat import prepare_cloakbrowser_runtime
 from .config import Config
 
@@ -66,10 +70,15 @@ def load_cnki_batch(path: str | Path, *, require_url: bool = False) -> list[dict
             raise ValueError(f"CNKI batch row {index} has an unsafe record_id.")
         if not title:
             raise ValueError(f"CNKI batch row {index} is missing title.")
+        try:
+            first_author = first_author_from_record(raw)
+        except ValueError as exc:
+            raise ValueError(f"CNKI batch row {index} {exc}.") from exc
         records.append(
             {
                 "record_id": record_id,
                 "title": title,
+                "first_author": first_author,
                 "url": url,
                 "zotero_item_key": str(raw.get("zotero_item_key") or "").strip(),
             }
