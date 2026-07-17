@@ -284,6 +284,30 @@ class PublicLanguageTests(unittest.TestCase):
         self.assertIn("manual broker", text)
         self.assertIn("not download-verified", text)
 
+    def test_readme_documents_chinese_author_disambiguation_and_daily_limit(self):
+        text = Path("README.md").read_text(encoding="utf-8")
+
+        self.assertIn('"authors": ["张三", "李四"]', text)
+        self.assertIn('"first_author": "Smith, John"', text)
+        self.assertIn("Only the first author is used", text)
+        self.assertIn("ambiguous_search_result", text)
+        self.assertIn(
+            "CNKI and Wanfang share one local daily limit of 100 download attempts",
+            text,
+        )
+        self.assertRegex(text, r"Failures\s+and retries\s+count")
+
+    def test_inst_sci_skill_documents_chinese_author_and_quota_guards(self):
+        text = Path("skills/instsci/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("Only the first author is used", text)
+        self.assertIn("ambiguous_search_result", text)
+        self.assertIn(
+            "CNKI and Wanfang share one local daily limit of 100 download attempts",
+            text,
+        )
+        self.assertRegex(text, r"Failures\s+and retries\s+count")
+
     def test_inst_sci_module_entrypoint_is_available(self):
         result = subprocess.run(
             [sys.executable, "-m", "instsci.cli", "--help"],

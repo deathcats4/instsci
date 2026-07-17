@@ -164,9 +164,35 @@ instsci cnki-batch .\records_cnki.json --navigation-mode search --output .\runs\
 instsci wanfang-batch .\records_wanfang.json --output .\runs\wanfang
 ```
 
+Batch records may include either an ordered author list or an explicit first
+author:
+
+```json
+[
+  {"record_id": "cnki-1", "title": "示例题名", "authors": ["张三", "李四"]},
+  {"record_id": "cnki-2", "title": "Another title", "first_author": "Smith, John"}
+]
+```
+
+`first_author` takes precedence; otherwise InstSci reads the first non-empty
+entry from `authors`. Only the first author is used for searching and
+disambiguation. A unique exact-title row can proceed without author metadata.
+When more than one row has the exact title, InstSci requires exactly one of
+those same result rows to match the first author. Otherwise it records
+`ambiguous_search_result` and does not click or download. If author matching was
+needed to select the row, the captured PDF must also contain the first author.
+
 For CNKI search mode, each record needs `record_id` and `title`; `url` is optional and used only as a fallback. Direct mode still requires a validated CNKI URL. Single-record CNKI downloads accept `--title`; InstSci marks `file_status=success` only when extracted PDF text matches the title or record id. A valid PDF that cannot be tied to the requested record is kept as `file_status=unverified` with `standard_status=pdf_candidate_conflict`.
 
 For Wanfang, records use `record_id`, `title`, and optional `query`/`url`; the batch route searches `s.wanfangdata.com.cn`, clicks the result-row download control, and captures the browser-generated `Fulltext/Download` PDF popup. CNKI and Wanfang classify visible SSO/CARSI/OpenAthens or configured institution pages as `auth_required`, so the user can complete login in the visible browser and retry the same run.
+
+CNKI and Wanfang share one local daily limit of 100 download attempts. InstSci
+reserves an attempt immediately before each browser download action; Failures
+and retries count, and the 101st attempt is blocked with
+`daily_limit_reached`. The persistent ledger covers InstSci runs on this local
+installation and local calendar day; it cannot count manual downloads or runs
+on other machines. Ledger corruption or an unavailable ledger fails closed as
+`quota_state_error` instead of allowing an uncounted download.
 
 Zotero sync also supports Chinese records without DOI: when a successful row has `zotero_item_key` and a PDF, `instsci zotero handoff` creates an `attachment_only` action and `instsci zotero sync` links the PDF to the existing Zotero item.
 ## Zotero
