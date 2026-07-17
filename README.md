@@ -192,17 +192,35 @@ For CNKI search mode, each record needs `record_id` and `title`; `url` is option
 Before evaluating CNKI candidates, search mode requires visible relevance sorting
 to be active so older exact-title rows are not hidden by publication-time order.
 If relevance sorting is unavailable or does not become active, InstSci fails
-closed: it does not select a result, reserve quota, or attempt a download.
+closed: it does not select a result, reserve an attempt, or start a download.
 
 For Wanfang, records use `record_id`, `title`, and optional `query`/`url`; the batch route searches `s.wanfangdata.com.cn`, clicks the result-row download control, and captures the browser-generated `Fulltext/Download` PDF popup. CNKI and Wanfang classify visible SSO/CARSI/OpenAthens or configured institution pages as `auth_required`, so the user can complete login in the visible browser and retry the same run.
 
-CNKI and Wanfang share one local daily limit of 100 download attempts. InstSci
-reserves an attempt immediately before each browser download action; Failures
-and retries count, and the 101st attempt is blocked with
-`daily_limit_reached`. The persistent ledger covers InstSci runs on this local
-installation and local calendar day; it cannot count manual downloads or runs
-on other machines. Ledger corruption or an unavailable ledger fails closed as
-`quota_state_error` instead of allowing an uncounted download.
+CNKI and Wanfang share one local attempt ledger for locking and audit, but they
+do not have a default hard daily limit. At 100 combined automated attempts,
+InstSci prints a conservative reminder; 100 is not a uniform official CNKI or
+Wanfang limit. Failures and retries count as attempts. The ledger covers only
+InstSci runs on this local installation and local calendar day; it cannot count
+manual downloads, other machines, or other users on the same institutional
+exit IP. Ledger corruption or an unavailable ledger fails closed as
+`quota_state_error` instead of allowing an unaudited download.
+
+Users or institutions can configure optional combined or portal-specific hard
+limits. A configured limit stops before capture with `daily_limit_reached`:
+
+```powershell
+instsci config-cmd --chinese-warning-threshold 80
+instsci config-cmd --chinese-combined-daily-limit 200
+instsci config-cmd --cnki-daily-limit 90 --wanfang-daily-limit 120
+instsci config-cmd --no-chinese-combined-daily-limit --no-cnki-daily-limit
+instsci cnki-batch records.json --daily-limit 30
+instsci wanfang-batch records.json --no-daily-limit
+```
+
+`--daily-limit` temporarily overrides that portal's configured limit while any
+configured combined limit still applies. `--no-daily-limit` disables all hard
+daily limits for that command, but keeps the reminder, ledger, delays, visible
+verification stops, and audit evidence.
 
 Inspect the local count and lock owner without changing state. A repair removes
 only a lock whose recorded PID is no longer running; it refuses active or

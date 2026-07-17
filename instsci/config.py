@@ -37,6 +37,10 @@ class Config:
     carsi_cookie_dir: str = ""  # Per-publisher CARSI cookies
     request_delay_min: float = 2.0
     request_delay_max: float = 5.0
+    chinese_download_warning_threshold: int | None = 100
+    chinese_download_combined_daily_limit: int | None = None
+    cnki_daily_download_limit: int | None = None
+    wanfang_daily_download_limit: int | None = None
 
     def __post_init__(self):
         base = DEFAULT_BASE_DIR

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from instsci.chinese_download_quota import ChineseDownloadQuotaError, QuotaReservation
-from instsci.cli import app
+from instsci.cli import _print_chinese_download_warning, _resolve_chinese_download_policy, app, console
 from instsci.config import Config
 
 
@@ -223,6 +223,7 @@ class ChineseBatchBehaviorTests(TestCase):
         run_dir = self.root / "run-wanfang-limit"
         page = _FakePage()
         context = _FakeContext(page)
+        self.config.wanfang_daily_download_limit = 100
         with (
             patch("instsci.cli.Config.load", return_value=self.config),
             patch("instsci.wanfang_session.open_wanfang_session", return_value=(context, page, run_dir)),
@@ -237,7 +238,7 @@ class ChineseBatchBehaviorTests(TestCase):
             patch(
                 "instsci.chinese_download_quota.reserve_chinese_download",
                 return_value=self._reservation("wanfang", 100, allowed=False),
-            ),
+            ) as reserve,
             patch("instsci.wanfang_session.capture_wanfang_pdf") as capture,
         ):
             result = self.runner.invoke(
@@ -247,8 +248,76 @@ class ChineseBatchBehaviorTests(TestCase):
 
         self.assertEqual(result.exit_code, 2, result.output)
         capture.assert_not_called()
+        self.assertIsNone(reserve.call_args.kwargs["policy"].combined_daily_limit)
+        self.assertEqual(reserve.call_args.kwargs["policy"].portal_daily_limit, 100)
         row = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))[0]
         self.assertEqual(row["standard_status"], "daily_limit_reached")
+
+    def test_policy_resolution_keeps_combined_and_portal_limits_independent(self) -> None:
+        self.config.chinese_download_combined_daily_limit = 40
+        self.config.cnki_daily_download_limit = 30
+
+        configured = _resolve_chinese_download_policy(self.config, portal="cnki")
+        overridden = _resolve_chinese_download_policy(self.config, portal="cnki", daily_limit=90)
+        disabled = _resolve_chinese_download_policy(self.config, portal="cnki", no_daily_limit=True)
+
+        self.assertEqual(configured.combined_daily_limit, 40)
+        self.assertEqual(configured.portal_daily_limit, 30)
+        self.assertEqual(overridden.combined_daily_limit, 40)
+        self.assertEqual(overridden.portal_daily_limit, 90)
+        self.assertIsNone(disabled.combined_daily_limit)
+        self.assertIsNone(disabled.portal_daily_limit)
+        self.assertEqual(disabled.warning_threshold, 100)
+
+    def test_warning_explains_that_threshold_is_not_an_official_limit(self) -> None:
+        quota = QuotaReservation(
+            allowed=True,
+            date="2026-07-17",
+            limit=None,
+            used=100,
+            remaining=None,
+            portal="cnki",
+            record_id="cnki-100",
+            portal_used=100,
+            warning_threshold=100,
+            warning_reached=True,
+            warning_triggered=True,
+        )
+
+        with console.capture() as captured:
+            _print_chinese_download_warning(quota)
+
+        output = " ".join(captured.get().split())
+        self.assertIn("conservative InstSci reminder", output)
+        self.assertIn("not a uniform official CNKI or Wanfang limit", output)
+
+    def test_conflicting_daily_limit_flags_stop_before_opening_browser(self) -> None:
+        source = self._input("cnki-conflicting-policy", "cnki")
+        with (
+            patch("instsci.cli.Config.load", return_value=self.config),
+            patch("instsci.cnki_session.open_cnki_login_session") as open_session,
+        ):
+            result = self.runner.invoke(
+                app,
+                ["cnki-batch", str(source), "--daily-limit", "30", "--no-daily-limit"],
+            )
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("cannot be used together", result.output)
+        open_session.assert_not_called()
+
+    def test_invalid_configured_limit_stops_before_opening_browser(self) -> None:
+        source = self._input("cnki-invalid-policy", "cnki")
+        self.config.cnki_daily_download_limit = "100"  # type: ignore[assignment]
+        with (
+            patch("instsci.cli.Config.load", return_value=self.config),
+            patch("instsci.cnki_session.open_cnki_login_session") as open_session,
+        ):
+            result = self.runner.invoke(app, ["cnki-batch", str(source)])
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("portal_daily_limit must be a positive integer or None", result.output)
+        open_session.assert_not_called()
 
     def test_corrupt_quota_state_blocks_capture(self) -> None:
         source = self._input("cnki-corrupt", "cnki")
@@ -384,7 +453,7 @@ class ChineseBatchBehaviorTests(TestCase):
         reservations = [entry for entries in ledger["days"].values() for entry in entries]
         self.assertEqual([entry["portal"] for entry in reservations], ["cnki", "wanfang"])
 
-    def test_quota_status_command_reports_shared_count(self) -> None:
+    def test_quota_status_command_reports_combined_and_portal_counts(self) -> None:
         from instsci.chinese_download_quota import reserve_chinese_download
 
         ledger = Path(self.config.cache_dir) / "chinese_download_quota.json"
@@ -393,7 +462,19 @@ class ChineseBatchBehaviorTests(TestCase):
             result = self.runner.invoke(app, ["chinese-quota", "status", "--json"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn('"used": 1', result.output)
+        self.assertIn('"combined_used": 1', result.output)
+        self.assertIn('"cnki_used": 1', result.output)
+        self.assertIn('"wanfang_used": 0', result.output)
+        self.assertIn('"combined_limit": null', result.output)
+
+    def test_quota_status_reports_invalid_policy_instead_of_dropping_it(self) -> None:
+        self.config.chinese_download_combined_daily_limit = 0
+        with patch("instsci.cli.Config.load", return_value=self.config):
+            result = self.runner.invoke(app, ["chinese-quota", "status", "--json"])
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn('"policy_valid": false', result.output)
+        self.assertIn("combined_limit must be a positive integer or None", result.output)
 
     def test_quota_repair_command_removes_only_verified_stale_lock(self) -> None:
         ledger = Path(self.config.cache_dir) / "chinese_download_quota.json"

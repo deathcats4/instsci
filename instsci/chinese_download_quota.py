@@ -1,4 +1,4 @@
-"""Persistent local quota for CNKI and Wanfang download attempts."""
+"""Persistent local audit ledger and safety policy for Chinese portal attempts."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-DAILY_DOWNLOAD_LIMIT = 100
+DEFAULT_DAILY_WARNING_THRESHOLD = 100
 QUOTA_LEDGER_SCHEMA = "instsci.chinese_download_quota.v1"
 SUPPORTED_PORTALS = {"cnki", "wanfang"}
 _LOCK_PID_PATTERN = re.compile(r"^pid=(\d+)\s*$")
@@ -22,15 +22,41 @@ class ChineseDownloadQuotaError(RuntimeError):
     """Raised when quota state cannot be trusted or updated safely."""
 
 
+def _validate_optional_limit(value: int | None, name: str) -> None:
+    if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1):
+        raise ValueError(f"{name} must be a positive integer or None")
+
+
+@dataclass(frozen=True)
+class ChineseDownloadPolicy:
+    """Resolved local policy for one Chinese literature portal command."""
+
+    warning_threshold: int | None = DEFAULT_DAILY_WARNING_THRESHOLD
+    combined_daily_limit: int | None = None
+    portal_daily_limit: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_optional_limit(self.warning_threshold, "warning_threshold")
+        _validate_optional_limit(self.combined_daily_limit, "combined_daily_limit")
+        _validate_optional_limit(self.portal_daily_limit, "portal_daily_limit")
+
+
 @dataclass(frozen=True)
 class QuotaReservation:
     allowed: bool
     date: str
-    limit: int
+    limit: int | None
     used: int
-    remaining: int
+    remaining: int | None
     portal: str
     record_id: str
+    portal_limit: int | None = None
+    portal_used: int = 0
+    portal_remaining: int | None = None
+    warning_threshold: int | None = DEFAULT_DAILY_WARNING_THRESHOLD
+    warning_reached: bool = False
+    warning_triggered: bool = False
+    limit_scope: str = ""
     reason: str = ""
 
     def to_json(self) -> dict[str, object]:
@@ -152,11 +178,16 @@ def inspect_chinese_download_quota(
     ledger_path: str | Path,
     *,
     now: datetime | None = None,
-    limit: int = DAILY_DOWNLOAD_LIMIT,
+    warning_threshold: int | None = DEFAULT_DAILY_WARNING_THRESHOLD,
+    combined_limit: int | None = None,
+    cnki_limit: int | None = None,
+    wanfang_limit: int | None = None,
 ) -> dict[str, object]:
     """Return local quota and lock health without changing either file."""
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        raise ValueError("limit must be a positive integer")
+    _validate_optional_limit(warning_threshold, "warning_threshold")
+    _validate_optional_limit(combined_limit, "combined_limit")
+    _validate_optional_limit(cnki_limit, "cnki_limit")
+    _validate_optional_limit(wanfang_limit, "wanfang_limit")
     path = Path(ledger_path).expanduser()
     lock_path = _quota_lock_path(path)
     current = now or datetime.now().astimezone()
@@ -172,11 +203,15 @@ def inspect_chinese_download_quota(
         reservations = days.get(date_key, [])
         if not isinstance(reservations, list):
             raise ChineseDownloadQuotaError(f"invalid quota ledger: {path}: daily reservations must be a list")
-        used = len(reservations)
+        combined_used = len(reservations)
+        cnki_used = sum(str(item.get("portal") or "").lower() == "cnki" for item in reservations)
+        wanfang_used = sum(str(item.get("portal") or "").lower() == "wanfang" for item in reservations)
     except ChineseDownloadQuotaError as exc:
         ledger_valid = False
         ledger_error = str(exc)
-        used = 0
+        combined_used = 0
+        cnki_used = 0
+        wanfang_used = 0
     lock_exists = lock_path.exists()
     lock_pid: int | None = None
     lock_pid_running: bool | None = None
@@ -194,9 +229,38 @@ def inspect_chinese_download_quota(
         "ledger_valid": ledger_valid,
         "ledger_error": ledger_error,
         "date": date_key,
-        "limit": limit,
-        "used": used,
-        "remaining": max(limit - used, 0) if ledger_valid else 0,
+        "warning_threshold": warning_threshold,
+        "warning_reached": bool(
+            ledger_valid and warning_threshold is not None and combined_used >= warning_threshold
+        ),
+        "limit": combined_limit,
+        "used": combined_used,
+        "remaining": (
+            max(combined_limit - combined_used, 0)
+            if ledger_valid and combined_limit is not None
+            else None
+        ),
+        "combined_limit": combined_limit,
+        "combined_used": combined_used,
+        "combined_remaining": (
+            max(combined_limit - combined_used, 0)
+            if ledger_valid and combined_limit is not None
+            else None
+        ),
+        "cnki_limit": cnki_limit,
+        "cnki_used": cnki_used,
+        "cnki_remaining": (
+            max(cnki_limit - cnki_used, 0)
+            if ledger_valid and cnki_limit is not None
+            else None
+        ),
+        "wanfang_limit": wanfang_limit,
+        "wanfang_used": wanfang_used,
+        "wanfang_remaining": (
+            max(wanfang_limit - wanfang_used, 0)
+            if ledger_valid and wanfang_limit is not None
+            else None
+        ),
         "lock_path": str(lock_path),
         "lock_exists": lock_exists,
         "lock_pid": lock_pid,
@@ -239,15 +303,16 @@ def reserve_chinese_download(
     portal: str,
     record_id: str,
     now: datetime | None = None,
-    limit: int = DAILY_DOWNLOAD_LIMIT,
+    policy: ChineseDownloadPolicy | None = None,
     lock_timeout: float = 5.0,
 ) -> QuotaReservation:
-    """Atomically reserve one shared CNKI/Wanfang download attempt."""
+    """Atomically reserve and audit one CNKI or Wanfang download attempt."""
     normalized_portal = str(portal or "").strip().lower()
     if normalized_portal not in SUPPORTED_PORTALS:
         raise ValueError("portal must be cnki or wanfang")
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        raise ValueError("limit must be a positive integer")
+    effective_policy = policy or ChineseDownloadPolicy()
+    if not isinstance(effective_policy, ChineseDownloadPolicy):
+        raise TypeError("policy must be a ChineseDownloadPolicy")
     path = Path(ledger_path).expanduser()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -267,15 +332,55 @@ def reserve_chinese_download(
         if not isinstance(reservations, list):
             raise ChineseDownloadQuotaError(f"invalid quota ledger: {path}: daily reservations must be a list")
         used = len(reservations)
-        if used >= limit:
+        portal_used = sum(
+            str(item.get("portal") or "").lower() == normalized_portal for item in reservations
+        )
+        if effective_policy.combined_daily_limit is not None and used >= effective_policy.combined_daily_limit:
             return QuotaReservation(
                 allowed=False,
                 date=date_key,
-                limit=limit,
+                limit=effective_policy.combined_daily_limit,
                 used=used,
                 remaining=0,
                 portal=normalized_portal,
                 record_id=str(record_id or ""),
+                portal_limit=effective_policy.portal_daily_limit,
+                portal_used=portal_used,
+                portal_remaining=(
+                    max(effective_policy.portal_daily_limit - portal_used, 0)
+                    if effective_policy.portal_daily_limit is not None
+                    else None
+                ),
+                warning_threshold=effective_policy.warning_threshold,
+                warning_reached=bool(
+                    effective_policy.warning_threshold is not None
+                    and used >= effective_policy.warning_threshold
+                ),
+                limit_scope="combined",
+                reason="daily_limit_reached",
+            )
+        if effective_policy.portal_daily_limit is not None and portal_used >= effective_policy.portal_daily_limit:
+            return QuotaReservation(
+                allowed=False,
+                date=date_key,
+                limit=effective_policy.combined_daily_limit,
+                used=used,
+                remaining=(
+                    max(effective_policy.combined_daily_limit - used, 0)
+                    if effective_policy.combined_daily_limit is not None
+                    else None
+                ),
+                portal=normalized_portal,
+                record_id=str(record_id or ""),
+                portal_limit=effective_policy.portal_daily_limit,
+                portal_used=portal_used,
+                portal_remaining=0,
+                warning_threshold=effective_policy.warning_threshold,
+                warning_reached=bool(
+                    effective_policy.warning_threshold is not None
+                    and used >= effective_policy.warning_threshold
+                ),
+                limit_scope="portal",
                 reason="daily_limit_reached",
             )
         reservations.append(
@@ -287,14 +392,35 @@ def reserve_chinese_download(
         )
         _write_ledger(path, payload)
         used += 1
+        portal_used += 1
+        warning_reached = bool(
+            effective_policy.warning_threshold is not None
+            and used >= effective_policy.warning_threshold
+        )
         return QuotaReservation(
             allowed=True,
             date=date_key,
-            limit=limit,
+            limit=effective_policy.combined_daily_limit,
             used=used,
-            remaining=limit - used,
+            remaining=(
+                effective_policy.combined_daily_limit - used
+                if effective_policy.combined_daily_limit is not None
+                else None
+            ),
             portal=normalized_portal,
             record_id=str(record_id or ""),
+            portal_limit=effective_policy.portal_daily_limit,
+            portal_used=portal_used,
+            portal_remaining=(
+                effective_policy.portal_daily_limit - portal_used
+                if effective_policy.portal_daily_limit is not None
+                else None
+            ),
+            warning_threshold=effective_policy.warning_threshold,
+            warning_reached=warning_reached,
+            warning_triggered=bool(
+                warning_reached and used == effective_policy.warning_threshold
+            ),
         )
     finally:
         try:

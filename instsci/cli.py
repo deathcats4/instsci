@@ -10,6 +10,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 # Fix Windows console encoding for Unicode output
@@ -51,7 +52,7 @@ app.add_typer(zotero_app, name="zotero")
 evidence_app = typer.Typer(help="Manage the external private-evidence index.", no_args_is_help=True)
 app.add_typer(evidence_app, name="evidence")
 chinese_quota_app = typer.Typer(
-    help="Inspect the shared CNKI/Wanfang daily quota and safely repair a stale PID lock.",
+    help="Inspect Chinese-portal attempt counts and configured safety limits, or repair a stale PID lock.",
     no_args_is_help=True,
 )
 app.add_typer(chinese_quota_app, name="chinese-quota")
@@ -86,18 +87,77 @@ RESULT_EVIDENCE_VALUES = {
 
 
 def _chinese_quota_ledger_path(config: Config) -> Path:
-    """Return the shared local CNKI/Wanfang quota ledger path."""
+    """Return the local CNKI/Wanfang attempt ledger path."""
     return Path(config.cache_dir).expanduser() / "chinese_download_quota.json"
+
+
+def _resolve_chinese_download_policy(
+    config: Config,
+    *,
+    portal: str,
+    daily_limit: int | None = None,
+    no_daily_limit: bool = False,
+):
+    """Resolve config and per-command overrides into one auditable policy."""
+    from .chinese_download_quota import ChineseDownloadPolicy
+
+    if portal not in {"cnki", "wanfang"}:
+        raise ValueError("portal must be cnki or wanfang")
+    if daily_limit is not None and no_daily_limit:
+        raise ValueError("--daily-limit and --no-daily-limit cannot be used together")
+    if daily_limit is not None and daily_limit < 1:
+        raise ValueError("--daily-limit must be a positive integer")
+    if no_daily_limit:
+        combined_limit = None
+        portal_limit = None
+    else:
+        combined_limit = config.chinese_download_combined_daily_limit
+        configured_portal_limit = (
+            config.cnki_daily_download_limit
+            if portal == "cnki"
+            else config.wanfang_daily_download_limit
+        )
+        portal_limit = daily_limit if daily_limit is not None else configured_portal_limit
+    return ChineseDownloadPolicy(
+        warning_threshold=config.chinese_download_warning_threshold,
+        combined_daily_limit=combined_limit,
+        portal_daily_limit=portal_limit,
+    )
+
+
+def _print_chinese_download_warning(quota) -> None:
+    if not quota.warning_triggered:
+        return
+    console.print(
+        "[yellow]This InstSci installation has made "
+        f"{quota.used} automated Chinese-portal download attempts today. "
+        f"{quota.warning_threshold} is a conservative InstSci reminder, not a uniform "
+        "official CNKI or Wanfang limit. Check your institution's database rules.[/yellow]"
+    )
 
 
 @chinese_quota_app.command("status")
 def chinese_quota_status(
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ):
-    """Show today's shared attempt count and quota-lock health without changing state."""
+    """Show today's portal counts, effective configured limits, and ledger health."""
     from .chinese_download_quota import inspect_chinese_download_quota
 
-    status = inspect_chinese_download_quota(_chinese_quota_ledger_path(Config.load()))
+    config = Config.load()
+    try:
+        status = inspect_chinese_download_quota(
+            _chinese_quota_ledger_path(config),
+            warning_threshold=config.chinese_download_warning_threshold,
+            combined_limit=config.chinese_download_combined_daily_limit,
+            cnki_limit=config.cnki_daily_download_limit,
+            wanfang_limit=config.wanfang_daily_download_limit,
+        )
+    except ValueError as exc:
+        if json_output:
+            console.print_json(data={"policy_valid": False, "error": str(exc)})
+        else:
+            console.print(f"[red]Invalid Chinese download policy: {exc}[/red]")
+        raise typer.Exit(2)
     if json_output:
         console.print_json(data=status)
     else:
@@ -106,9 +166,17 @@ def chinese_quota_status(
         table.add_column("Value")
         for field in (
             "date",
-            "used",
-            "limit",
-            "remaining",
+            "combined_used",
+            "combined_limit",
+            "combined_remaining",
+            "cnki_used",
+            "cnki_limit",
+            "cnki_remaining",
+            "wanfang_used",
+            "wanfang_limit",
+            "wanfang_remaining",
+            "warning_threshold",
+            "warning_reached",
             "ledger_valid",
             "lock_exists",
             "lock_pid",
@@ -1763,6 +1831,8 @@ def cnki_batch(
     file: Path = typer.Argument(help="JSON array of CNKI records: record_id, title, optional url, and optional zotero_item_key."),
     output: str = typer.Option("", "--output", "-o", help="Private run directory for PDFs, screenshots, and manifests."),
     delay: float = typer.Option(30.0, "--delay", min=2.0, help="Seconds between article downloads."),
+    daily_limit: Optional[int] = typer.Option(None, "--daily-limit", min=1, help="Temporary hard limit for CNKI attempts on this local day."),
+    no_daily_limit: bool = typer.Option(False, "--no-daily-limit", help="Disable configured hard daily limits for this command; reminders still apply."),
     verification_policy: str = typer.Option("stop", "--verification-policy", help="Human-verification policy: stop or prompt."),
     navigation_mode: str = typer.Option("search", "--navigation-mode", help="CNKI article navigation mode: search or direct."),
     skip_completed: bool = typer.Option(True, "--skip-completed/--no-skip-completed", help="When --output has a prior manifest, keep successful rows and skip them."),
@@ -1806,6 +1876,16 @@ def cnki_batch(
         return
 
     cfg = Config.load()
+    try:
+        download_policy = _resolve_chinese_download_policy(
+            cfg,
+            portal="cnki",
+            daily_limit=daily_limit,
+            no_daily_limit=no_daily_limit,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2)
     cfg.ensure_dirs()
     other_portal_domains = set(chinese_literature_session_domains()) - set(CNKI_HOST_SUFFIXES)
     auth_domains = tuple(domain for domain in configured_session_domains(cfg) if domain not in other_portal_domains)
@@ -2051,6 +2131,7 @@ def cnki_batch(
                         _chinese_quota_ledger_path(cfg),
                         portal="cnki",
                         record_id=record_id,
+                        policy=download_policy,
                     )
                 except ChineseDownloadQuotaError as exc:
                     row.update(
@@ -2067,12 +2148,13 @@ def cnki_batch(
                     break
                 row.setdefault("quota_attempts", []).append(quota.to_json())
                 row["quota"] = quota.to_json()
+                _print_chinese_download_warning(quota)
                 if not quota.allowed:
                     row.update(
                         {
                             "standard_status": "daily_limit_reached",
                             "result_evidence": "not_verified",
-                            "next_action": "stop_batch_and_resume_next_local_day",
+                            "next_action": "review_configured_download_policy_or_resume_next_local_day",
                             "evidence": str(before),
                         }
                     )
@@ -2111,6 +2193,7 @@ def cnki_batch(
                                     _chinese_quota_ledger_path(cfg),
                                     portal="cnki",
                                     record_id=record_id,
+                                    policy=download_policy,
                                 )
                             except ChineseDownloadQuotaError as exc:
                                 row.update(
@@ -2126,12 +2209,13 @@ def cnki_batch(
                                 break
                             row.setdefault("quota_attempts", []).append(quota.to_json())
                             row["quota"] = quota.to_json()
+                            _print_chinese_download_warning(quota)
                             if not quota.allowed:
                                 row.update(
                                     {
                                         "standard_status": "daily_limit_reached",
                                         "result_evidence": "not_verified",
-                                        "next_action": "stop_batch_and_resume_next_local_day",
+                                        "next_action": "review_configured_download_policy_or_resume_next_local_day",
                                     }
                                 )
                                 rows.append(row)
@@ -2220,6 +2304,8 @@ def wanfang_batch(
     file: Path = typer.Argument(help="JSON array of Wanfang records: record_id, title, optional query/url/zotero_item_key."),
     output: str = typer.Option("", "--output", "-o", help="Private run directory for PDFs, screenshots, and manifests."),
     delay: float = typer.Option(10.0, "--delay", min=2.0, help="Seconds between article downloads."),
+    daily_limit: Optional[int] = typer.Option(None, "--daily-limit", min=1, help="Temporary hard limit for Wanfang attempts on this local day."),
+    no_daily_limit: bool = typer.Option(False, "--no-daily-limit", help="Disable configured hard daily limits for this command; reminders still apply."),
     verification_policy: str = typer.Option("stop", "--verification-policy", help="Human-verification policy: stop or prompt."),
     profile_dir: str = typer.Option("", "--profile-dir", help="Persistent visible browser profile. Defaults to config wanfang_profile_dir."),
     skip_completed: bool = typer.Option(True, "--skip-completed/--no-skip-completed", help="When --output has a prior manifest, keep successful rows and skip them."),
@@ -2260,6 +2346,16 @@ def wanfang_batch(
         raise typer.Exit(2)
 
     cfg = Config.load()
+    try:
+        download_policy = _resolve_chinese_download_policy(
+            cfg,
+            portal="wanfang",
+            daily_limit=daily_limit,
+            no_daily_limit=no_daily_limit,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2)
     cfg.ensure_dirs()
     other_portal_domains = set(chinese_literature_session_domains()) - set(WANFANG_HOST_SUFFIXES)
     auth_domains = tuple(domain for domain in configured_session_domains(cfg) if domain not in other_portal_domains)
@@ -2427,6 +2523,7 @@ def wanfang_batch(
                         _chinese_quota_ledger_path(cfg),
                         portal="wanfang",
                         record_id=record_id,
+                        policy=download_policy,
                     )
                 except ChineseDownloadQuotaError as exc:
                     row.update(
@@ -2442,12 +2539,13 @@ def wanfang_batch(
                     break
                 row.setdefault("quota_attempts", []).append(quota.to_json())
                 row["quota"] = quota.to_json()
+                _print_chinese_download_warning(quota)
                 if not quota.allowed:
                     row.update(
                         {
                             "standard_status": "daily_limit_reached",
                             "result_evidence": "not_verified",
-                            "next_action": "stop_batch_and_resume_next_local_day",
+                            "next_action": "review_configured_download_policy_or_resume_next_local_day",
                         }
                     )
                     rows.append(row)
@@ -2482,6 +2580,7 @@ def wanfang_batch(
                                     _chinese_quota_ledger_path(cfg),
                                     portal="wanfang",
                                     record_id=record_id,
+                                    policy=download_policy,
                                 )
                             except ChineseDownloadQuotaError as exc:
                                 row.update(
@@ -2497,12 +2596,13 @@ def wanfang_batch(
                                 break
                             row.setdefault("quota_attempts", []).append(quota.to_json())
                             row["quota"] = quota.to_json()
+                            _print_chinese_download_warning(quota)
                             if not quota.allowed:
                                 row.update(
                                     {
                                         "standard_status": "daily_limit_reached",
                                         "result_evidence": "not_verified",
-                                        "next_action": "stop_batch_and_resume_next_local_day",
+                                        "next_action": "review_configured_download_policy_or_resume_next_local_day",
                                     }
                                 )
                                 rows.append(row)
@@ -4314,10 +4414,29 @@ def config_cmd(
     set_carsi_enable: bool = typer.Option(False, "--carsi-enable", help="Legacy federated auth option.", hidden=True),
     set_carsi_disable: bool = typer.Option(False, "--carsi-disable", help="Legacy federated auth option.", hidden=True),
     set_carsi_school: str = typer.Option("", "--carsi-school", help="Legacy federated school option.", hidden=True),
+    set_chinese_warning: Optional[int] = typer.Option(None, "--chinese-warning-threshold", min=1, help="Set the non-blocking daily Chinese-portal reminder threshold."),
+    disable_chinese_warning: bool = typer.Option(False, "--no-chinese-warning", help="Disable the daily Chinese-portal reminder."),
+    set_chinese_combined_limit: Optional[int] = typer.Option(None, "--chinese-combined-daily-limit", min=1, help="Set an optional combined CNKI/Wanfang hard daily limit."),
+    clear_chinese_combined_limit: bool = typer.Option(False, "--no-chinese-combined-daily-limit", help="Remove the combined Chinese-portal hard daily limit."),
+    set_cnki_limit: Optional[int] = typer.Option(None, "--cnki-daily-limit", min=1, help="Set an optional CNKI hard daily limit."),
+    clear_cnki_limit: bool = typer.Option(False, "--no-cnki-daily-limit", help="Remove the CNKI hard daily limit."),
+    set_wanfang_limit: Optional[int] = typer.Option(None, "--wanfang-daily-limit", min=1, help="Set an optional Wanfang hard daily limit."),
+    clear_wanfang_limit: bool = typer.Option(False, "--no-wanfang-daily-limit", help="Remove the Wanfang hard daily limit."),
 ):
     """View or update configuration."""
     cfg = Config.load()
     changed = False
+
+    conflicting_policy_options = (
+        (set_chinese_warning, disable_chinese_warning, "Chinese warning threshold"),
+        (set_chinese_combined_limit, clear_chinese_combined_limit, "combined Chinese daily limit"),
+        (set_cnki_limit, clear_cnki_limit, "CNKI daily limit"),
+        (set_wanfang_limit, clear_wanfang_limit, "Wanfang daily limit"),
+    )
+    for value, clear, label in conflicting_policy_options:
+        if value is not None and clear:
+            console.print(f"[red]Cannot set and remove the {label} in one command.[/red]")
+            raise typer.Exit(2)
 
     if set_email:
         cfg.email = set_email
@@ -4400,6 +4519,42 @@ def config_cmd(
         changed = True
         console.print(f"[green]Federated login school set to: {federated_school}[/green]")
 
+    if set_chinese_warning is not None:
+        cfg.chinese_download_warning_threshold = set_chinese_warning
+        changed = True
+        console.print(f"[green]Chinese download reminder set to: {set_chinese_warning} attempts.[/green]")
+    elif disable_chinese_warning:
+        cfg.chinese_download_warning_threshold = None
+        changed = True
+        console.print("[yellow]Chinese download reminder disabled.[/yellow]")
+
+    if set_chinese_combined_limit is not None:
+        cfg.chinese_download_combined_daily_limit = set_chinese_combined_limit
+        changed = True
+        console.print(f"[green]Combined Chinese hard daily limit set to: {set_chinese_combined_limit}.[/green]")
+    elif clear_chinese_combined_limit:
+        cfg.chinese_download_combined_daily_limit = None
+        changed = True
+        console.print("[green]Combined Chinese hard daily limit removed.[/green]")
+
+    if set_cnki_limit is not None:
+        cfg.cnki_daily_download_limit = set_cnki_limit
+        changed = True
+        console.print(f"[green]CNKI hard daily limit set to: {set_cnki_limit}.[/green]")
+    elif clear_cnki_limit:
+        cfg.cnki_daily_download_limit = None
+        changed = True
+        console.print("[green]CNKI hard daily limit removed.[/green]")
+
+    if set_wanfang_limit is not None:
+        cfg.wanfang_daily_download_limit = set_wanfang_limit
+        changed = True
+        console.print(f"[green]Wanfang hard daily limit set to: {set_wanfang_limit}.[/green]")
+    elif clear_wanfang_limit:
+        cfg.wanfang_daily_download_limit = None
+        changed = True
+        console.print("[green]Wanfang hard daily limit removed.[/green]")
+
     if changed:
         cfg.save()
 
@@ -4408,7 +4563,11 @@ def config_cmd(
                       set_connector_url, set_proxy_url,
                        set_elsevier_key, set_elsevier_token,
                        set_federated_enable, set_federated_disable, set_federated_school,
-                       set_carsi_enable, set_carsi_disable, set_carsi_school])
+                       set_carsi_enable, set_carsi_disable, set_carsi_school,
+                       set_chinese_warning is not None, disable_chinese_warning,
+                       set_chinese_combined_limit is not None, clear_chinese_combined_limit,
+                       set_cnki_limit is not None, clear_cnki_limit,
+                       set_wanfang_limit is not None, clear_wanfang_limit])
     if show and not has_setter:
         # Determine school type
         try:
@@ -4432,6 +4591,10 @@ def config_cmd(
         console.print(f"  Output dir:        {cfg.output_dir}")
         console.print(f"  Cache dir:         {cfg.cache_dir}")
         console.print(f"  Cookie path:       {cfg.cookie_path}")
+        console.print(f"  Chinese reminder:  {cfg.chinese_download_warning_threshold or '(disabled)'}")
+        console.print(f"  Chinese hard cap:  {cfg.chinese_download_combined_daily_limit or '(not set)'}")
+        console.print(f"  CNKI hard cap:     {cfg.cnki_daily_download_limit or '(not set)'}")
+        console.print(f"  Wanfang hard cap:  {cfg.wanfang_daily_download_limit or '(not set)'}")
 
 
 def _run_federated_login(

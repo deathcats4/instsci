@@ -6,7 +6,8 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from instsci.chinese_download_quota import (
-    DAILY_DOWNLOAD_LIMIT,
+    DEFAULT_DAILY_WARNING_THRESHOLD,
+    ChineseDownloadPolicy,
     ChineseDownloadQuotaError,
     inspect_chinese_download_quota,
     repair_chinese_download_quota_lock,
@@ -21,37 +22,52 @@ class ChineseDownloadQuotaTests(TestCase):
         self.ledger = Path(self.temp.name) / "chinese_download_quota.json"
         self.now = datetime(2026, 7, 17, 12, 0, tzinfo=timezone(timedelta(hours=8)))
 
-    def reserve(self, portal: str, record_id: str, *, now: datetime | None = None, limit: int = 100):
+    def reserve(
+        self,
+        portal: str,
+        record_id: str,
+        *,
+        now: datetime | None = None,
+        policy: ChineseDownloadPolicy | None = None,
+    ):
         return reserve_chinese_download(
             self.ledger,
             portal=portal,
             record_id=record_id,
             now=now or self.now,
-            limit=limit,
+            policy=policy,
             lock_timeout=0.05,
         )
 
-    def test_default_daily_limit_is_100(self) -> None:
-        self.assertEqual(DAILY_DOWNLOAD_LIMIT, 100)
+    def test_default_policy_warns_at_100_without_a_hard_limit(self) -> None:
+        policy = ChineseDownloadPolicy()
+
+        self.assertEqual(DEFAULT_DAILY_WARNING_THRESHOLD, 100)
+        self.assertEqual(policy.warning_threshold, 100)
+        self.assertIsNone(policy.combined_daily_limit)
+        self.assertIsNone(policy.portal_daily_limit)
 
     def test_first_reservation_writes_auditable_ledger(self) -> None:
         result = self.reserve("cnki", "CNKI-1")
 
         self.assertTrue(result.allowed)
         self.assertEqual(result.used, 1)
-        self.assertEqual(result.remaining, 99)
+        self.assertIsNone(result.remaining)
+        self.assertEqual(result.portal_used, 1)
+        self.assertIsNone(result.portal_remaining)
         self.assertEqual(result.date, "2026-07-17")
         payload = json.loads(self.ledger.read_text(encoding="utf-8"))
         self.assertEqual(payload["schema"], "instsci.chinese_download_quota.v1")
         self.assertEqual(payload["days"]["2026-07-17"][0]["portal"], "cnki")
         self.assertEqual(payload["days"]["2026-07-17"][0]["record_id"], "CNKI-1")
 
-    def test_cnki_and_wanfang_share_one_daily_limit(self) -> None:
+    def test_cnki_and_wanfang_share_audit_counts_without_a_default_hard_limit(self) -> None:
         first = self.reserve("cnki", "a")
         second = self.reserve("wanfang", "b")
 
         self.assertEqual((first.used, second.used), (1, 2))
-        self.assertEqual(second.remaining, 98)
+        self.assertIsNone(second.remaining)
+        self.assertEqual(second.portal_used, 1)
 
     def test_reservations_persist_across_independent_calls(self) -> None:
         self.reserve("cnki", "a")
@@ -66,18 +82,48 @@ class ChineseDownloadQuotaTests(TestCase):
 
         self.assertEqual(result.used, 2)
 
-    def test_combined_101st_attempt_is_blocked_without_appending(self) -> None:
+    def test_default_100th_attempt_warns_and_101st_is_still_allowed(self) -> None:
+        result = None
         for index in range(100):
-            self.assertTrue(self.reserve("cnki", str(index)).allowed)
+            result = self.reserve("cnki", str(index))
 
-        blocked = self.reserve("wanfang", "101")
+        assert result is not None
+        self.assertTrue(result.allowed)
+        self.assertTrue(result.warning_triggered)
+        self.assertTrue(result.warning_reached)
+        after = self.reserve("wanfang", "101")
+        self.assertTrue(after.allowed)
+        self.assertFalse(after.warning_triggered)
+        self.assertTrue(after.warning_reached)
+
+    def test_configured_combined_101st_attempt_is_blocked_without_appending(self) -> None:
+        policy = ChineseDownloadPolicy(combined_daily_limit=100)
+        for index in range(100):
+            self.assertTrue(self.reserve("cnki", str(index), policy=policy).allowed)
+
+        blocked = self.reserve("wanfang", "101", policy=policy)
 
         self.assertFalse(blocked.allowed)
         self.assertEqual(blocked.reason, "daily_limit_reached")
         self.assertEqual(blocked.used, 100)
         self.assertEqual(blocked.remaining, 0)
+        self.assertEqual(blocked.limit_scope, "combined")
         payload = json.loads(self.ledger.read_text(encoding="utf-8"))
         self.assertEqual(len(payload["days"]["2026-07-17"]), 100)
+
+    def test_configured_portal_limit_does_not_block_the_other_portal(self) -> None:
+        cnki_policy = ChineseDownloadPolicy(portal_daily_limit=1)
+        wanfang_policy = ChineseDownloadPolicy(portal_daily_limit=1)
+        self.assertTrue(self.reserve("cnki", "cnki-1", policy=cnki_policy).allowed)
+
+        blocked = self.reserve("cnki", "cnki-2", policy=cnki_policy)
+        other = self.reserve("wanfang", "wanfang-1", policy=wanfang_policy)
+
+        self.assertFalse(blocked.allowed)
+        self.assertEqual(blocked.limit_scope, "portal")
+        self.assertTrue(other.allowed)
+        self.assertEqual(other.used, 2)
+        self.assertEqual(other.portal_used, 1)
 
     def test_next_local_date_gets_fresh_allowance_and_keeps_prior_day(self) -> None:
         self.reserve("cnki", "old")
@@ -134,13 +180,23 @@ class ChineseDownloadQuotaTests(TestCase):
                 lock_timeout=0.05,
             )
 
-    def test_status_reports_used_remaining_and_no_lock(self) -> None:
+    def test_status_reports_combined_and_per_portal_policy(self) -> None:
         self.reserve("cnki", "one")
 
-        status = inspect_chinese_download_quota(self.ledger, now=self.now)
+        status = inspect_chinese_download_quota(
+            self.ledger,
+            now=self.now,
+            combined_limit=10,
+            cnki_limit=4,
+            wanfang_limit=6,
+        )
 
         self.assertEqual(status["used"], 1)
-        self.assertEqual(status["remaining"], 99)
+        self.assertEqual(status["remaining"], 9)
+        self.assertEqual(status["cnki_used"], 1)
+        self.assertEqual(status["cnki_remaining"], 3)
+        self.assertEqual(status["wanfang_used"], 0)
+        self.assertEqual(status["wanfang_remaining"], 6)
         self.assertFalse(status["lock_exists"])
         self.assertFalse(status["stale_lock"])
 

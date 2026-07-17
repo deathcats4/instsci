@@ -43,7 +43,7 @@ STATUS_SUGGESTED_PATHS = {
     "browser_group_pending": ["publisher_doctor_matrix", "split_by_publisher", "rerun_by_publisher", "workflow_plan"],
     "unsupported_publisher": ["add_publisher_profile", "oa_retry", "library_resolver", "ill_request"],
     "ambiguous_search_result": ["manual_browser_single_doi", "rerun_diagnose"],
-    "daily_limit_reached": ["stop_batch", "retry_next_day"],
+    "daily_limit_reached": ["stop_batch", "review_local_policy", "retry_next_day"],
     "quota_state_error": ["inspect_local_state", "stop_batch"],
 }
 
@@ -303,7 +303,7 @@ def manifest_next_action(status: str, entry: PublisherMatrixEntry | None = None)
     if status == "ambiguous_search_result":
         return "inspect_visible_search_results_and_select_manually"
     if status == "daily_limit_reached":
-        return "stop_batch_and_resume_next_local_day"
+        return "review_configured_download_policy_or_resume_next_local_day"
     if status == "quota_state_error":
         return "inspect_or_repair_local_quota_state_before_retry"
     if entry and entry.prewarm:

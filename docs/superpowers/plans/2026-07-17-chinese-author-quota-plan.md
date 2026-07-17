@@ -1,21 +1,25 @@
-# Chinese Literature Author Disambiguation and Daily Quota Implementation Plan
+# Chinese Literature Author Disambiguation and Download Policy Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add first-author disambiguation for duplicate CNKI/Wanfang title results and enforce a persistent shared limit of 100 local Chinese-literature download attempts per day.
+**Goal:** Add first-author disambiguation for duplicate CNKI/Wanfang title
+results and a persistent local safety-policy ledger with a non-blocking reminder
+plus optional combined and per-portal hard limits.
 
-**Architecture:** Shared identity helpers derive and normalize the first author, while each portal keeps DOM-specific candidate extraction and pre-click revalidation. A browser-independent quota ledger uses an exclusive lock plus atomic replacement; the CLI reserves quota immediately before capture and records selection/quota evidence in each manifest row.
+**Architecture:** Shared identity helpers derive and normalize the first author, while each portal keeps DOM-specific candidate extraction and pre-click revalidation. A browser-independent attempt ledger uses an exclusive lock plus atomic replacement; the CLI resolves warning and optional hard-limit policy, reserves immediately before capture, and records selection/policy evidence in each manifest row.
 
 **Tech Stack:** Python 3.10+, standard-library `json`, `os`, `datetime`, `pathlib`, existing BeautifulSoup/Playwright-compatible page APIs, `unittest`, Typer CLI.
 
 ## Global Constraints
 
-- CNKI and Wanfang share one local-calendar-day limit of exactly 100 download attempts.
-- Failed attempts and retries consume quota; ambiguous candidates blocked before capture do not.
+- CNKI and Wanfang share one local-calendar-day attempt ledger. The default hard
+  limit is unset; 100 is a non-blocking conservative reminder threshold.
+- Combined, CNKI, and Wanfang hard limits are optional local policy, not portal facts.
+- Failed attempts and retries consume the attempt count; ambiguous candidates blocked before capture do not.
 - Existing author-less rows remain valid when an exact title identifies one loaded result row.
 - Duplicate exact-title rows require one uniquely extracted same-row first author; later coauthors never match.
 - A record ID may select only among exact-title rows and never overrides a title mismatch.
-- CNKI must confirm relevance sorting before candidate evaluation; sort failure fails closed before quota reservation.
+- CNKI must confirm relevance sorting before candidate evaluation; sort failure fails closed before attempt reservation.
 - If author disambiguation was required, the PDF title-adjacent first-page signature must have the same first author.
 - Corrupt, locked, or unwritable quota state fails closed and performs no download.
 - Automated tests must not call a live portal or start a browser.
@@ -247,32 +251,41 @@ git commit -m "feat: disambiguate Wanfang results by first author"
 
 ---
 
-### Task 4: Persistent Shared Daily Quota Ledger
+### Task 4: Persistent Attempt Ledger and Configurable Daily Policy
 
 **Files:**
 - Create: `instsci/chinese_download_quota.py`
 - Create: `instsci/tests/test_chinese_download_quota.py`
 
 **Interfaces:**
-- Produces: `DAILY_DOWNLOAD_LIMIT = 100`.
+- Produces: `DEFAULT_DAILY_WARNING_THRESHOLD = 100`.
+- Produces: immutable `ChineseDownloadPolicy` with a warning threshold plus
+  optional combined and current-portal hard limits.
 - Produces: `ChineseDownloadQuotaError(RuntimeError)`.
-- Produces: immutable `QuotaReservation` with `allowed`, `date`, `limit`, `used`, `remaining`, `portal`, `record_id`, and `reason`.
-- Produces: `reserve_chinese_download(ledger_path, *, portal, record_id, now=None, limit=100, lock_timeout=5.0) -> QuotaReservation`.
+- Produces: immutable `QuotaReservation` with combined and portal counts,
+  optional limits, warning state, limit scope, and record identity.
+- Produces: `reserve_chinese_download(ledger_path, *, portal, record_id, now=None, policy=None, lock_timeout=5.0) -> QuotaReservation`.
 
 - [ ] **Step 1: Write failing quota tests**
 
-Add tests for first reservation, CNKI/Wanfang shared counting, persistence across calls, 100 allowed and 101st blocked, next-day reset, corrupt JSON failure, invalid schema failure, and a pre-existing lock timing out without changing the ledger.
+Add tests for first reservation, combined and per-portal counting, persistence
+across calls, the default 100th-attempt reminder without blocking, explicit
+combined and portal limit exhaustion, next-day reset, corrupt JSON failure,
+invalid schema failure, and a pre-existing lock timing out without changing the
+ledger.
 
 ```python
-def test_cnki_and_wanfang_share_one_daily_limit(self) -> None:
+def test_cnki_and_wanfang_share_audit_counts_without_a_default_hard_limit(self) -> None:
     first = reserve_chinese_download(path, portal="cnki", record_id="a", now=fixed)
     second = reserve_chinese_download(path, portal="wanfang", record_id="b", now=fixed)
     self.assertEqual((first.used, second.used), (1, 2))
+    self.assertIsNone(second.limit)
 
-def test_combined_101st_attempt_is_blocked(self) -> None:
+def test_configured_combined_101st_attempt_is_blocked(self) -> None:
+    policy = ChineseDownloadPolicy(combined_daily_limit=100)
     for index in range(100):
-        self.assertTrue(reserve_chinese_download(path, portal="cnki", record_id=str(index), now=fixed).allowed)
-    blocked = reserve_chinese_download(path, portal="wanfang", record_id="101", now=fixed)
+        self.assertTrue(reserve_chinese_download(path, portal="cnki", record_id=str(index), now=fixed, policy=policy).allowed)
+    blocked = reserve_chinese_download(path, portal="wanfang", record_id="101", now=fixed, policy=policy)
     self.assertFalse(blocked.allowed)
     self.assertEqual(blocked.reason, "daily_limit_reached")
 ```
@@ -300,7 +313,7 @@ Use the ledger schema:
 }
 ```
 
-Acquire `ledger_path.with_suffix(ledger_path.suffix + ".lock")` using `os.open(..., os.O_CREAT | os.O_EXCL | os.O_WRONLY)`, polling until `lock_timeout`. Within the lock, parse and validate the schema and `days` lists, refuse corrupt state, append only when below the limit, write a same-directory temporary JSON file, flush and `os.fsync`, then `os.replace`. Remove the lock in `finally`. Use `datetime.now().astimezone()` when `now` is omitted and normalize a naive injected datetime with the local timezone.
+Acquire `ledger_path.with_suffix(ledger_path.suffix + ".lock")` using `os.open(..., os.O_CREAT | os.O_EXCL | os.O_WRONLY)`, polling until `lock_timeout`. Within the lock, parse and validate the schema and `days` lists, refuse corrupt state, compute combined and current-portal counts, append only when any configured hard limits allow it, write a same-directory temporary JSON file, flush and `os.fsync`, then `os.replace`. Remove the lock in `finally`. Use `datetime.now().astimezone()` when `now` is omitted and normalize a naive injected datetime with the local timezone.
 
 - [ ] **Step 4: Run quota tests and verify GREEN**
 
@@ -310,7 +323,7 @@ Run the Step 2 command. Expected: all quota tests pass.
 
 ```powershell
 git add instsci/chinese_download_quota.py instsci/tests/test_chinese_download_quota.py
-git commit -m "feat: enforce shared Chinese download quota"
+git commit -m "feat: add Chinese download policy ledger"
 ```
 
 ---
@@ -337,7 +350,7 @@ Test the pure PDF identity helper with author required and optional. Extend Wanf
 
 ```python
 self.assertEqual(manifest_next_action("ambiguous_search_result"), "inspect_visible_search_results_and_select_manually")
-self.assertEqual(manifest_next_action("daily_limit_reached"), "stop_batch_and_resume_next_local_day")
+self.assertEqual(manifest_next_action("daily_limit_reached"), "review_configured_download_policy_or_resume_next_local_day")
 self.assertEqual(manifest_next_action("quota_state_error"), "inspect_or_repair_local_quota_state_before_retry")
 ```
 
@@ -357,7 +370,7 @@ Add the three statuses to `STANDARD_STATUSES`. Add suggested paths:
 
 ```python
 "ambiguous_search_result": ["manual_browser_single_doi", "rerun_diagnose"],
-"daily_limit_reached": ["stop_batch", "retry_next_day"],
+"daily_limit_reached": ["stop_batch", "review_local_policy", "retry_next_day"],
 "quota_state_error": ["inspect_local_state", "stop_batch"],
 ```
 
@@ -367,11 +380,23 @@ Implement corresponding `manifest_next_action` branches. Implement PDF identity 
 
 Pass `first_author` to every initial and resumed `navigate_cnki_article_via_search` call. Copy search selection evidence to the manifest. If navigation reports `ambiguous_search_result`, checkpoint the row as missing/browser-verified and continue without capture.
 
-Immediately before each `capture_cnki_pdf` call, reserve from `Path(cfg.cache_dir) / "chinese_download_quota.json"`. On exhaustion, checkpoint `daily_limit_reached` with the quota snapshot and break. On `ChineseDownloadQuotaError`, checkpoint `quota_state_error` and break. Apply conditional PDF author verification when `author_disambiguation_used` is true.
+Immediately before each `capture_cnki_pdf` call, resolve the configured warning,
+combined limit, and CNKI limit, then reserve from `Path(cfg.cache_dir) /
+"chinese_download_quota.json"`. On explicitly configured hard-limit exhaustion,
+checkpoint `daily_limit_reached` with the policy snapshot and break. A warning
+threshold never blocks. On `ChineseDownloadQuotaError`, checkpoint
+`quota_state_error` and break. Apply conditional PDF author verification when
+`author_disambiguation_used` is true.
 
 - [ ] **Step 5: Integrate Wanfang batch safety**
 
-Inspect the result candidate with title and first author before reservation. Handle ambiguity without quota consumption. Reserve quota, then call `capture_wanfang_pdf` with the inspected selection so the click revalidates the same row. Apply conditional PDF author verification through `summarize_wanfang_capture_result` and record selection/quota evidence in the manifest. Stop on exhausted or unsafe quota state.
+Inspect the result candidate with title and first author before reservation.
+Handle ambiguity without attempt consumption. Resolve the Wanfang and optional
+combined policy, reserve the attempt, then call `capture_wanfang_pdf` with the
+inspected selection so the click revalidates the same row. Apply conditional
+PDF author verification through `summarize_wanfang_capture_result` and record
+selection/policy evidence in the manifest. Stop on configured hard-limit
+exhaustion or unsafe ledger state.
 
 - [ ] **Step 6: Run focused tests and verify GREEN**
 

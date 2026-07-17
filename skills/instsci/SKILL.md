@@ -169,20 +169,34 @@ instsci chinese-literature-sites
   When author matching selects the result, require the same author in the
   title-adjacent first-page signature; body, acknowledgement, and reference
   occurrences do not count.
-- CNKI and Wanfang share one local daily limit of 100 download attempts.
-  Reserve immediately before every browser download action. Failures and retries
-  count; stop at `daily_limit_reached`. Treat a missing, locked, corrupt, or
-  unwritable quota ledger as `quota_state_error` and fail closed. This ledger
-  covers only InstSci activity on the current local installation, not manual
-  downloads or other machines.
-  Use `instsci chinese-quota status` to inspect count and lock ownership. Use
+- CNKI and Wanfang share one local attempt ledger for atomic locking and audit,
+  not a default shared hard limit. The default combined warning threshold is
+  100, but it is a conservative InstSci reminder rather than a uniform official
+  portal limit. Default hard limits are unset. Users or institutions may set a
+  combined limit, a CNKI limit, a Wanfang limit, or a per-command override.
+  Reserve immediately before every browser download action; failures and retries
+  count. Stop at `daily_limit_reached` only when an explicitly configured hard
+  limit is reached. Treat a missing, locked, corrupt, or unwritable ledger as
+  `quota_state_error` and fail closed. The ledger covers only InstSci activity
+  on this installation and local calendar day, not manual downloads, other
+  machines, or other users behind the same institutional exit IP. Keep the
+  default inter-download delays and stop on visible verification; never probe
+  for a portal limit by deliberately downloading until a block appears.
+  Configure policy with `instsci config-cmd --chinese-warning-threshold N`,
+  `--chinese-combined-daily-limit N`, `--cnki-daily-limit N`, or
+  `--wanfang-daily-limit N`; each hard limit also has a corresponding `--no-*`
+  removal option. Batch commands accept `--daily-limit N` for a temporary
+  portal limit and `--no-daily-limit` to disable configured hard limits for that
+  command while retaining reminders and audit.
+  Use `instsci chinese-quota status` to inspect per-portal counts, policy, and
+  lock ownership. Use
   `instsci chinese-quota repair` only for its PID-checked stale-lock repair; it
   must refuse active or unparseable locks.
 - CNKI is the primary Chinese full-text route: use the persistent CNKI profile
   and the search-first batch path (`instsci cnki-batch ... --navigation-mode search`).
   Before exact-title and first-author evaluation, require visible relevance sorting
   to be active. If the sort control is missing or never becomes active, fail
-  closed without selecting a result, reserving quota, or attempting a download.
+  closed without selecting a result, reserving an attempt, or starting a download.
   In search mode, records need `record_id` and `title`; `url` is optional and
   used only as a fallback. Direct mode still requires a validated CNKI URL.
   Prefer homepage/search-result navigation before saved detail URLs because
