@@ -131,7 +131,10 @@ class MetadataSourceTests(TestCase):
             {"error": "Authentication required"},
             status_code=401,
         )
-        with patch("instsci.sources.openalex.request_with_retry", return_value=response):
+        with patch.dict(os.environ, {"OPENALEX_API_KEY": ""}), patch(
+            "instsci.sources.openalex.request_with_retry",
+            return_value=response,
+        ):
             report = openalex.get_rate_limit_status()
 
         self.assertEqual(report["status"], "authentication_required")
