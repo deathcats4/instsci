@@ -183,11 +183,15 @@ the requested first author. A later coauthor never counts, and an author field
 whose order cannot be extracted reliably is treated as ambiguous. Otherwise it
 records `ambiguous_search_result` with `result_evidence=browser_verified` and
 does not click or download. For CNKI, record_id never overrides an exact-title mismatch.
-If author matching was needed to select the row, the captured PDF must expose
-the same first author in its title-adjacent first-page signature; a name found
-only in the body, acknowledgements, or references does not pass.
+After capture, the requested title must match the bounded title block at the
+top of the PDF's first page. If author matching was needed to select the row,
+the same block must expose the requested first author in its title-adjacent
+first-page signature. Title or author occurrences found only after an abstract, body-section,
+references, or acknowledgements heading do not pass. This also fails closed for
+papers without an abstract: a title found later in body or reference text is not
+accepted as the downloaded paper's identity.
 
-For CNKI search mode, each record needs `record_id` and `title`; `url` is optional and used only as a fallback. Direct mode still requires a validated CNKI URL. Single-record CNKI downloads accept `--title`; InstSci marks `file_status=success` only when extracted PDF text matches the title or record id. A valid PDF that cannot be tied to the requested record is kept as `file_status=unverified` with `standard_status=pdf_candidate_conflict`.
+For CNKI search mode, each record needs `record_id` and `title`; `url` is optional and used only as a fallback. Direct mode still requires a validated CNKI URL. Single-record CNKI downloads require `--title`; InstSci marks `file_status=success` only when the first-page title block matches that title. `--record-id` is only a local output/manifest identifier and never counts as PDF identity evidence. A valid PDF that cannot be tied to the requested title is kept as `file_status=unverified` with `standard_status=pdf_candidate_conflict`.
 
 Before evaluating CNKI candidates, search mode requires visible relevance sorting
 to be active so older exact-title rows are not hidden by publication-time order.

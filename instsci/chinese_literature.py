@@ -52,7 +52,23 @@ def first_author_from_result_values(values: Iterable[object]) -> str:
     return authors[0] if authors else ""
 
 
-_SIGNATURE_STOP = re.compile(r"^(?:摘要|关键词|关键字|abstract\b|key\s*words?\b)", re.IGNORECASE)
+_TITLE_BLOCK_MAX_LINES = 24
+_SECTION_PREFIX = (
+    r"(?:(?:第\s*[0-9一二三四五六七八九十百]+\s*[章节])|"
+    r"(?:[0-9一二三四五六七八九十百]+(?:\.[0-9]+)*[、.．)]?))?\s*"
+)
+_SIGNATURE_STOP = re.compile(
+    rf"^\s*{_SECTION_PREFIX}(?:"
+    r"摘\s*要|关\s*键\s*[词字]|"
+    r"引言|前言|正文|材料与方法|研究方法|方法|结果|讨论|结论|结语|"
+    r"参考\s*文献|引用\s*文献|致谢|鸣谢|"
+    r"abstract\b|key\s*words?\b|introduction\b|preface\b|"
+    r"materials?\s+and\s+methods?\b|methods?\b|results?\b|discussion\b|"
+    r"conclusions?\b|references?\b|bibliography\b|acknowledg(?:e)?ments?\b"
+    r")",
+    re.IGNORECASE,
+)
+_TITLE_BLOCK_PROSE = re.compile(r"(?:[。！？]|…{2,})")
 _SIGNATURE_METADATA = re.compile(
     r"(?:doi\s*[:：]|收稿|基金|中图分类|文献标识|作者单位|通讯作者|"
     r"大学|学院|研究所|实验室|医院|department|university|institute|laboratory)",
@@ -61,37 +77,54 @@ _SIGNATURE_METADATA = re.compile(
 _SINGLE_CJK_CHARACTER = re.compile(r"^[\u3400-\u9fff]$")
 
 
+def _compact_pdf_title(value: object) -> str:
+    return re.sub(r"\s+", "", str(value or "")).casefold()
+
+
+def _find_first_page_title_span(text: str, title: str) -> tuple[list[str], int, int] | None:
+    expected = _compact_pdf_title(title)
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    lines = lines[:_TITLE_BLOCK_MAX_LINES]
+    if not expected or not lines:
+        return None
+    for start, line in enumerate(lines):
+        # A real one-line title can begin with a section word such as
+        # "Results". Match the complete expected title before treating that
+        # same line as a structural boundary.
+        if _compact_pdf_title(line) == expected:
+            return lines, start, start
+        if _SIGNATURE_STOP.search(line):
+            break
+        combined = ""
+        for end in range(start, min(start + 4, len(lines))):
+            if _SIGNATURE_STOP.search(lines[end]):
+                break
+            combined += _compact_pdf_title(lines[end])
+            if combined == expected:
+                return lines, start, end
+        if _TITLE_BLOCK_PROSE.search(line):
+            break
+    return None
+
+
+def pdf_title_matches_first_page_block(text: str, *, title: str) -> bool:
+    """Return whether the expected title is in the bounded first-page title block."""
+    return _find_first_page_title_span(text, title) is not None
+
+
 def first_author_from_pdf_signature(text: str, *, title: str, expected_author: str = "") -> str:
     """Extract the first author from the title-adjacent first-page signature.
 
     The function intentionally returns empty when title placement or the author
     line is unclear. It never scans references, acknowledgements, or body text.
     """
-    expected = re.sub(r"\s+", "", str(title or "")).casefold()
-    lines = [line.strip() for line in str(text or "").splitlines()]
-    if not expected or not lines:
+    title_span = _find_first_page_title_span(text, title)
+    if title_span is None:
         return ""
-    signature_end = next(
-        (index for index, line in enumerate(lines) if _SIGNATURE_STOP.search(line)),
-        min(len(lines), 40),
-    )
-    title_end: int | None = None
-    for start in range(signature_end):
-        combined = ""
-        for end in range(start, min(start + 4, signature_end)):
-            combined += re.sub(r"\s+", "", lines[end]).casefold()
-            if expected in combined:
-                title_end = end
-                break
-        if title_end is not None:
-            break
-    if title_end is None:
-        return ""
-    signature_lines = lines[title_end + 1 : min(title_end + 6, signature_end)]
+    lines, _, title_end = title_span
+    signature_lines = lines[title_end + 1 : min(title_end + 6, len(lines))]
     for index, line in enumerate(signature_lines):
-        if not line:
-            continue
-        if _SIGNATURE_STOP.search(line):
+        if _SIGNATURE_STOP.search(line) or _TITLE_BLOCK_PROSE.search(line):
             return ""
         if _SIGNATURE_METADATA.search(line) or len(line) > 240 or "。" in line:
             continue

@@ -73,6 +73,74 @@ class ChineseBatchBehaviorTests(TestCase):
             reason="" if allowed else "daily_limit_reached",
         )
 
+    def _run_cnki_fetch(self, *, title: str, record_id: str, first_page_text: str):
+        run_dir = self.root / f"run-cnki-fetch-{record_id}"
+        pdf_path = run_dir / "captured.pdf"
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        pdf_path.write_bytes(b"%PDF-" + b"x" * 12000)
+        page = _FakePage()
+        page.url = "https://kns.cnki.net/kcms/detail/detail.aspx"
+        context = _FakeContext(page)
+        capture_result = {
+            "pdf_path": str(pdf_path),
+            "pdf_header_valid": True,
+            "size_bytes": pdf_path.stat().st_size,
+        }
+
+        with (
+            patch("instsci.cli.Config.load", return_value=self.config),
+            patch("instsci.cnki_session.cnki_url_is_allowed", return_value=True),
+            patch("instsci.cnki_session.open_cnki_login_session", return_value=(context, page, run_dir)),
+            patch("instsci.cnki_session.navigate_cnki_article", return_value={"session_status": "ready"}),
+            patch("instsci.cnki_session.cnki_verification_visible", return_value=False),
+            patch("instsci.cnki_session.capture_cnki_pdf", return_value=capture_result),
+            patch("instsci.extractors.pdf_extractor.extract_text", return_value=first_page_text),
+            patch("instsci.extractors.pdf_extractor.extract_first_page_text", return_value=first_page_text),
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "cnki-fetch",
+                    "https://kns.cnki.net/kcms/detail/detail.aspx",
+                    "--record-id",
+                    record_id,
+                    "--title",
+                    title,
+                    "--output",
+                    str(run_dir),
+                ],
+            )
+
+        manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+        return result, manifest
+
+    def test_cnki_fetch_local_record_id_never_bypasses_title_block(self) -> None:
+        result, manifest = self._run_cnki_fetch(
+            title="同题研究",
+            record_id="2024",
+            first_page_text="另一篇论文\n王五\n2024\n摘要",
+        )
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertFalse(manifest["title_match"])
+        self.assertFalse(manifest["verified_match"])
+        self.assertEqual(manifest["file_status"], "unverified")
+        self.assertEqual(manifest["standard_status"], "pdf_candidate_conflict")
+        self.assertNotIn("record_id_match", manifest)
+
+    def test_cnki_fetch_matching_title_succeeds_with_arbitrary_local_record_id(self) -> None:
+        result, manifest = self._run_cnki_fetch(
+            title="同题研究",
+            record_id="paper",
+            first_page_text="同题研究\n李四，张三\n摘要",
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(manifest["title_match"])
+        self.assertTrue(manifest["verified_match"])
+        self.assertEqual(manifest["file_status"], "success")
+        self.assertEqual(manifest["standard_status"], "success")
+
     def test_cnki_ambiguous_candidate_is_browser_verified_and_consumes_no_quota(self) -> None:
         source = self._input("cnki-ambiguous", "cnki")
         run_dir = self.root / "run-cnki-ambiguous"

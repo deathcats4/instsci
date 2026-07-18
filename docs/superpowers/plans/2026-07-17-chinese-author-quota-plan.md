@@ -20,7 +20,7 @@ plus optional combined and per-portal hard limits.
 - Duplicate exact-title rows require one uniquely extracted same-row first author; later coauthors never match.
 - A record ID may select only among exact-title rows and never overrides a title mismatch.
 - CNKI must confirm relevance sorting before candidate evaluation; sort failure fails closed before attempt reservation.
-- If author disambiguation was required, the PDF title-adjacent first-page signature must have the same first author.
+- Every captured PDF title must match the bounded first-page title block. If author disambiguation was required, the title-adjacent signature in that block must have the same first author; body and reference occurrences never count.
 - Corrupt, locked, or unwritable quota state fails closed and performs no download.
 - Automated tests must not call a live portal or start a browser.
 - Preserve the visible-browser CAPTCHA/SSO workflow and do not add parallel portal tabs.
@@ -374,7 +374,7 @@ Add the three statuses to `STANDARD_STATUSES`. Add suggested paths:
 "quota_state_error": ["inspect_local_state", "stop_batch"],
 ```
 
-Implement corresponding `manifest_next_action` branches. Implement PDF identity output with `title_match`, `pdf_first_author`, `author_match`, and `verified`; when `author_required` is true, extract only the title-adjacent first-page signature author and compare its first entry.
+Implement corresponding `manifest_next_action` branches. Implement PDF identity output with `title_match`, `pdf_first_author`, `author_match`, and `verified`. Match the title only in a bounded first-page title block that stops before abstract, body, references, and acknowledgements; when `author_required` is true, extract only the title-adjacent first-page signature author and compare its first entry. Cover both a legitimate no-abstract paper and a wrong PDF whose requested identity occurs only in references.
 
 - [ ] **Step 4: Integrate CNKI batch safety**
 

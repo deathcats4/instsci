@@ -16,17 +16,20 @@ class ChineseBatchSafetyTests(TestCase):
         self.assertEqual(path, Path(tmp) / "cache" / "chinese_download_quota.json")
 
     def test_pdf_identity_requires_author_only_after_disambiguation(self) -> None:
+        signature = "同题研究\n张三\n摘要"
         optional = _verify_chinese_pdf_identity(
             "同题研究",
             "李四",
             "同题研究 张三",
             author_required=False,
+            author_signature_text=signature,
         )
         required = _verify_chinese_pdf_identity(
             "同题研究",
             "李四",
             "同题研究 张三",
             author_required=True,
+            author_signature_text=signature,
         )
         reference_only = _verify_chinese_pdf_identity(
             "同题研究",
@@ -41,6 +44,30 @@ class ChineseBatchSafetyTests(TestCase):
         self.assertFalse(required["author_match"])
         self.assertFalse(reference_only["verified"])
         self.assertFalse(reference_only["author_match"])
+
+    def test_pdf_identity_rejects_title_and_author_found_only_in_references(self) -> None:
+        signature = "另一篇论文\n王五\n正文……\n参考文献\n同题研究\n李四"
+
+        optional_author = _verify_chinese_pdf_identity(
+            "同题研究",
+            "李四",
+            signature,
+            author_required=False,
+            author_signature_text=signature,
+        )
+        required_author = _verify_chinese_pdf_identity(
+            "同题研究",
+            "李四",
+            signature,
+            author_required=True,
+            author_signature_text=signature,
+        )
+
+        self.assertFalse(optional_author["title_match"])
+        self.assertFalse(optional_author["verified"])
+        self.assertFalse(required_author["title_match"])
+        self.assertFalse(required_author["author_match"])
+        self.assertFalse(required_author["verified"])
 
 if __name__ == "__main__":
     import unittest
