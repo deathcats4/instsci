@@ -418,6 +418,25 @@ class WanfangSessionTests(TestCase):
                 strict_title_match=True,
             )
 
+            no_abstract_success = summarize_wanfang_capture_result(
+                result,
+                title="同题研究",
+                first_author="李四",
+                author_required=True,
+                text="同题研究 李四 1 引言",
+                author_signature_text="同题研究\n李四，张三\n某大学\n1 引言\n研究内容。",
+                strict_title_match=True,
+            )
+            no_abstract_reference_only = summarize_wanfang_capture_result(
+                {**result, "filename_title_match": True},
+                title="同题研究",
+                first_author="李四",
+                author_required=True,
+                text="另一篇论文 王五 正文 参考文献 同题研究 李四",
+                author_signature_text="另一篇论文\n王五\n正文……\n参考文献\n同题研究\n李四",
+                strict_title_match=True,
+            )
+
         self.assertFalse(conflict["author_match"])
         self.assertEqual(conflict["file_status"], "unverified")
         self.assertEqual(conflict["standard_status"], "pdf_candidate_conflict")
@@ -425,6 +444,13 @@ class WanfangSessionTests(TestCase):
         self.assertEqual(success["file_status"], "success")
         self.assertFalse(reference_only["author_match"])
         self.assertEqual(reference_only["standard_status"], "pdf_candidate_conflict")
+        self.assertTrue(no_abstract_success["title_match"])
+        self.assertTrue(no_abstract_success["author_match"])
+        self.assertEqual(no_abstract_success["file_status"], "success")
+        self.assertFalse(no_abstract_reference_only["title_match"])
+        self.assertFalse(no_abstract_reference_only["author_match"])
+        self.assertEqual(no_abstract_reference_only["file_status"], "unverified")
+        self.assertEqual(no_abstract_reference_only["standard_status"], "pdf_candidate_conflict")
 
     def test_wanfang_downloaded_pdf_path_ignores_empty_or_directory_paths(self) -> None:
         self.assertIsNone(wanfang_downloaded_pdf_path({}))

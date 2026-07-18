@@ -3,8 +3,8 @@
 ## Goal
 
 Make CNKI and Wanfang search-first downloads safer by using the first author to
-disambiguate duplicate exact-title search results and by enforcing a persistent
-local limit of 100 Chinese-literature download attempts per calendar day.
+disambiguate duplicate exact-title search results and by applying a persistent,
+configurable local download-safety policy with a default reminder at 100 attempts.
 
 ## Scope
 
@@ -70,15 +70,19 @@ the safe outcome is manual review rather than selecting the first row.
 
 ## Download Verification
 
-Existing PDF header, size, and title checks remain mandatory.
+Existing PDF header and size checks remain mandatory. PDF title identity is
+verified only inside a bounded title block at the top of the first page. The
+block ends at an abstract, body-section, references, or acknowledgements heading,
+or at obvious body prose; title occurrences elsewhere in the document do not
+count. A legitimate paper without an abstract can still pass when its title and
+signature precede the first body heading.
 
-When a unique title row was selected without author disambiguation, the current
-title-based success rule remains unchanged. When author disambiguation was used,
-InstSci locates the requested title on the first page, extracts the immediately
-following signature author line, and compares only its first author. Names found
-only in the body, acknowledgements, or references do not count. If the PDF is
-valid but the required first author does not match, keep the file as
-`file_status=unverified` with `standard_status=pdf_candidate_conflict`.
+When author disambiguation was used, InstSci extracts the immediately following
+signature author line from that same title block and compares only its first
+author. Names found only in the body, acknowledgements, or references do not
+count. If a valid PDF fails the required title or first-author check, keep the
+file as `file_status=unverified` with
+`standard_status=pdf_candidate_conflict`.
 
 Each manifest row records:
 
@@ -148,8 +152,8 @@ deterministic tests.
 ### `instsci/cnki_session.py`
 
 Preserves the first author from batch input and returns structured candidate
-selection evidence. CNKI link selection uses stable record ID first, then exact
-title, then first-author disambiguation.
+selection evidence. CNKI first requires exact title, then uses a matching stable
+record ID or first-author disambiguation within those exact-title rows.
 
 ### `instsci/wanfang_session.py`
 
@@ -217,3 +221,6 @@ compatibility cases.
     active; sort failure consumes no quota and performs no capture.
 13. CNKI and Wanfang hard limits can be configured independently; one portal's
     limit does not block the other unless a combined hard limit is configured.
+14. A captured PDF title is accepted only from the bounded first-page title
+    block. A no-abstract wrong PDF whose requested title and author occur only
+    in body or reference text remains `unverified/pdf_candidate_conflict`.

@@ -20,6 +20,7 @@ from .chinese_literature import (
     get_chinese_literature_portal,
     normalize_author_name,
     ordered_author_names,
+    pdf_title_matches_first_page_block,
 )
 from .cloakbrowser_compat import prepare_cloakbrowser_runtime
 from .config import Config
@@ -354,7 +355,7 @@ def summarize_wanfang_capture_result(
 ) -> dict[str, object]:
     """Return manifest status fields for a captured Wanfang download result."""
     resolved_pdf_path = wanfang_downloaded_pdf_path(result) if pdf_path is None else pdf_path
-    title_match = bool(result.get("filename_title_match")) or (_compact_text(title) in _compact_text(text))
+    title_match = pdf_title_matches_first_page_block(author_signature_text, title=title)
     normalized_author = normalize_author_name(first_author)
     pdf_first_author = first_author_from_pdf_signature(
         author_signature_text,

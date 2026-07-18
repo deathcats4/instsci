@@ -27,7 +27,11 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import Config
-from .chinese_literature import first_author_from_pdf_signature, normalize_author_name
+from .chinese_literature import (
+    first_author_from_pdf_signature,
+    normalize_author_name,
+    pdf_title_matches_first_page_block,
+)
 from .fetcher import PaperFetcher
 from . import multi_search
 from .publisher_matrix import manifest_next_action, manifest_suggested_paths, normalize_suggested_paths
@@ -226,8 +230,6 @@ def _verify_chinese_pdf_identity(
     author_signature_text: str = "",
 ) -> dict[str, object]:
     """Verify title and, after author disambiguation, first-author identity."""
-    compact_text = "".join(str(text or "").split()).casefold()
-    compact_title = "".join(str(title or "").split()).casefold()
     normalized_author = normalize_author_name(first_author)
     pdf_first_author = first_author_from_pdf_signature(
         author_signature_text,
@@ -235,7 +237,7 @@ def _verify_chinese_pdf_identity(
         expected_author=first_author,
     )
     author_match = bool(normalized_author and normalized_author == normalize_author_name(pdf_first_author))
-    title_match = bool(compact_title and compact_title in compact_text)
+    title_match = pdf_title_matches_first_page_block(author_signature_text, title=title)
     return {
         "title_match": title_match,
         "author_match": author_match,
@@ -1682,7 +1684,7 @@ def cnki_login(
 def cnki_fetch(
     url: str = typer.Argument(help="CNKI article URL saved in Zotero or copied from the article page."),
     record_id: str = typer.Option("cnki_article", "--record-id", help="Stable local identifier used for the output PDF name."),
-    title: str = typer.Option("", "--title", help="Expected article title. Required to mark a captured PDF as verified success unless record_id is found in the PDF text."),
+    title: str = typer.Option("", "--title", help="Expected article title. Required in the first-page title block unless record_id is found on the first page."),
     output: str = typer.Option("", "--output", "-o", help="Private run directory for PDF and browser evidence."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ):
@@ -1771,9 +1773,16 @@ def cnki_fetch(
             pdf_path = Path(str(result.get("pdf_path") or ""))
             valid_pdf = bool(result.get("pdf_header_valid")) and int(result.get("size_bytes") or 0) > 10_000
             text = pdf_extractor.extract_text(pdf_path) if valid_pdf and pdf_path.exists() else ""
-            compact_text = "".join(text.split()).lower()
-            title_match = bool(title.strip()) and "".join(title.split()).lower() in compact_text
-            record_id_match = bool(record_id.strip() and record_id != "cnki_article") and record_id.lower() in text.lower()
+            first_page_text = (
+                pdf_extractor.extract_first_page_text(pdf_path)
+                if valid_pdf and pdf_path.exists()
+                else ""
+            )
+            title_match = pdf_title_matches_first_page_block(first_page_text, title=title)
+            record_id_match = (
+                bool(record_id.strip() and record_id != "cnki_article")
+                and record_id.casefold() in first_page_text.casefold()
+            )
             verified = valid_pdf and (title_match or record_id_match)
             report.update(result)
             report.update(
@@ -1782,6 +1791,7 @@ def cnki_fetch(
                     "title_match": title_match,
                     "record_id_match": record_id_match,
                     "text_length": len(text),
+                    "first_page_text_length": len(first_page_text),
                     "verified_match": verified,
                     "file_status": "success" if verified else ("unverified" if valid_pdf else "missing"),
                     "standard_status": (

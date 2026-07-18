@@ -157,8 +157,9 @@ instsci chinese-literature-sites
 - For every Chinese literature portal, require exact-title evidence before
   treating a search hit as the target article. Search pages can contain many
   similar Chinese titles; never download or report success from a related title
-  merely because keywords overlap. After capture, still require filename or PDF
-  text/title verification before `file_status=success`.
+  merely because keywords overlap. After capture, require the requested title
+  in the bounded first-page title block before `file_status=success`; a filename
+  or occurrence elsewhere in the PDF is not identity evidence.
 - Batch records may supply `first_author` or an ordered `authors` list;
   `first_author` takes precedence. Only the first author is used for searching
   and disambiguation. If an exact title appears in more than one result row,
@@ -167,8 +168,12 @@ instsci chinese-literature-sites
   record `ambiguous_search_result` with `result_evidence=browser_verified` and
   do not click or download. For CNKI, record_id never overrides an exact-title mismatch.
   When author matching selects the result, require the same author in the
-  title-adjacent first-page signature; body, acknowledgement, and reference
-  occurrences do not count.
+  title-adjacent first-page signature. Stop the title block at abstract,
+  body-section, references, or acknowledgements headings (including numbered
+  headings); title and author occurrences after that boundary do not count.
+  For a paper without an abstract, accept a real top-of-page title/signature
+  before the first body heading, but fail closed when the requested title and
+  author occur only in body or reference text.
 - CNKI and Wanfang share one local attempt ledger for atomic locking and audit,
   not a default shared hard limit. The default combined warning threshold is
   100, but it is a conservative InstSci reminder rather than a uniform official
@@ -208,8 +213,11 @@ instsci chinese-literature-sites
   `unverified/pdf_candidate_conflict`.
 - After changing Chinese-portal selectors or identity logic, use a visible-browser
   smoke test with one duplicate exact title: run one true-first-author positive
-  selection and one later-coauthor negative selection. Store screenshots and
-  manifests under the external runtime directory, verify negative cases consume
+  selection and one later-coauthor negative selection. Also run local extracted-text
+  fixtures for a legitimate no-abstract title/signature and a wrong no-abstract
+  PDF where the requested title/author occur only under references; the latter
+  must remain `unverified/pdf_candidate_conflict`. Store screenshots and manifests
+  under the external runtime directory, verify pre-capture negative cases consume
   no quota, and never turn this check into a bulk download.
 - Wanfang is a browser-verified search-download route: start at
   `s.wanfangdata.com.cn`, click the result-row `下载` control, and capture the

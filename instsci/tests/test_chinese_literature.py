@@ -13,6 +13,7 @@ from instsci.chinese_literature import (
     list_chinese_literature_portals,
     normalize_author_name,
     ordered_author_names,
+    pdf_title_matches_first_page_block,
 )
 
 
@@ -64,6 +65,33 @@ class ChineseLiteraturePortalTests(unittest.TestCase):
         text = "另一篇论文\n王五\n摘要：研究内容\n参考文献\n同题研究\n李四"
 
         self.assertEqual(first_author_from_pdf_signature(text, title="同题研究"), "")
+
+    def test_pdf_title_block_accepts_legitimate_paper_without_abstract(self):
+        text = "同题\n研究\n李四，张三\n某大学地质学院\n1 引言\n研究内容。"
+
+        self.assertTrue(pdf_title_matches_first_page_block(text, title="同题研究"))
+        self.assertEqual(first_author_from_pdf_signature(text, title="同题研究"), "李四")
+
+    def test_pdf_title_block_stops_before_body_references_without_abstract(self):
+        text = "另一篇论文\n王五\n正文……\n参考文献\n同题研究\n李四"
+
+        self.assertFalse(pdf_title_matches_first_page_block(text, title="同题研究"))
+        self.assertEqual(first_author_from_pdf_signature(text, title="同题研究"), "")
+
+    def test_pdf_title_block_stops_at_numbered_english_references(self):
+        text = "Another Paper\nWang Wu\n1 Introduction\nBody text\n2 References\n同题研究\n李四"
+
+        self.assertFalse(pdf_title_matches_first_page_block(text, title="同题研究"))
+        self.assertEqual(first_author_from_pdf_signature(text, title="同题研究"), "")
+
+    def test_pdf_title_block_allows_title_starting_with_section_word(self):
+        text = "Results of Pyrite Experiments\nSmith, John；Li, Si\n1 Introduction\nBody text."
+
+        self.assertTrue(pdf_title_matches_first_page_block(text, title="Results of Pyrite Experiments"))
+        self.assertEqual(
+            first_author_from_pdf_signature(text, title="Results of Pyrite Experiments"),
+            "Smith, John",
+        )
 
     def test_pdf_signature_reassembles_expected_first_author_split_across_lines(self):
         text = "深度学习研究综述\n张\n菊\n郭永峰\n某大学\n摘要"
